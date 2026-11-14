@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - Панель
 
 struct PanelStyle: ViewModifier {
-    var padding: CGFloat = 16
+    var padding: CGFloat = Theme.Space.group
 
     func body(content: Content) -> some View {
         content
@@ -25,7 +25,7 @@ struct PanelStyle: ViewModifier {
 }
 
 extension View {
-    func panelStyle(padding: CGFloat = 16) -> some View {
+    func panelStyle(padding: CGFloat = Theme.Space.group) -> some View {
         modifier(PanelStyle(padding: padding))
     }
 }
@@ -49,6 +49,7 @@ struct PanelHeader: View {
                     .foregroundStyle(Theme.mutedSoft)
             }
         }
+        .frame(height: Theme.Space.section)
     }
 }
 
@@ -131,13 +132,16 @@ struct ToolbarPill: View {
     var trailingChevron = false
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: Theme.Space.related) {
             if let icon {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.muted)
             }
             Text(title)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 192, alignment: .leading)
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(Theme.text)
             if trailingChevron {
@@ -146,8 +150,8 @@ struct ToolbarPill: View {
                     .foregroundStyle(Theme.mutedSoft)
             }
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 7)
+        .padding(.horizontal, Theme.Space.control)
+        .padding(.vertical, Theme.Space.related)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.55))

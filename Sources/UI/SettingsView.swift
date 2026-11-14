@@ -6,7 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
             soundSection
             midiSection
             pianoSection
@@ -35,7 +35,7 @@ struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 480, height: 510)
+        .frame(width: 520, height: 600)
         .background(Theme.gradient)
         .onAppear {
             // Системный заголовок окна настроек на русском.
@@ -50,7 +50,7 @@ struct SettingsView: View {
     // MARK: - Звук
 
     private var soundSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.control) {
             sectionTitle("Звук")
 
             HStack {
@@ -64,7 +64,7 @@ struct SettingsView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 240)
+                .frame(width: 240, alignment: .trailing)
             }
 
             HStack {
@@ -79,7 +79,7 @@ struct SettingsView: View {
                     Text("512 — максимум стабильности").tag(UInt32(512))
                 }
                 .labelsHidden()
-                .frame(width: 240)
+                .frame(width: 240, alignment: .trailing)
             }
 
             Button {
@@ -91,7 +91,8 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .foregroundStyle(Theme.accentDeep)
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.group)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(0.45))
@@ -105,7 +106,7 @@ struct SettingsView: View {
     // MARK: - MIDI
 
     private var midiSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.control) {
             sectionTitle("MIDI")
 
             HStack {
@@ -120,7 +121,7 @@ struct SettingsView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 240)
+                .frame(width: 240, alignment: .trailing)
             }
 
             HStack(spacing: 7) {
@@ -144,7 +145,8 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .foregroundStyle(Theme.accentDeep)
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.group)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(0.45))
@@ -158,7 +160,7 @@ struct SettingsView: View {
     // MARK: - Пианино
 
     private var pianoSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.control) {
             sectionTitle("Встроенный звук пианино")
 
             Toggle(isOn: Binding(
@@ -178,7 +180,8 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.group)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(0.45))

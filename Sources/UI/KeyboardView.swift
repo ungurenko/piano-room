@@ -27,8 +27,8 @@ struct KeyboardView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, Theme.Space.group)
+        .padding(.vertical, Theme.Space.control)
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)

@@ -29,22 +29,24 @@ struct InstrumentsPanel: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: Theme.Space.group) {
             PanelHeader(title: "Инструменты", trailing: "\(InstrumentCatalog.favorites.count) из 128")
 
-            VStack(spacing: 5) {
-                ForEach(Array(InstrumentCatalog.favorites.enumerated()), id: \.element.id) { index, instrument in
-                    InstrumentRow(
-                        instrument: instrument,
-                        isActive: state.currentInstrument.id == instrument.id,
-                        shortcut: index < 6 ? String(index + 1) : nil
-                    ) {
-                        state.selectInstrument(instrument)
+            ScrollView {
+                VStack(spacing: Theme.Space.tight) {
+                    ForEach(Array(InstrumentCatalog.favorites.enumerated()), id: \.element.id) { index, instrument in
+                        InstrumentRow(
+                            instrument: instrument,
+                            isActive: state.currentInstrument.id == instrument.id,
+                            shortcut: index < 6 ? String(index + 1) : nil
+                        ) {
+                            state.selectInstrument(instrument)
+                        }
                     }
                 }
             }
-
-            Spacer(minLength: 0)
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: .infinity, alignment: .top)
 
             Button {
                 state.showAllInstruments = true
@@ -59,7 +61,7 @@ struct InstrumentsPanel: View {
                         .foregroundStyle(Theme.muted)
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.vertical, Theme.Space.control)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.white.opacity(0.55))
@@ -72,6 +74,7 @@ struct InstrumentsPanel: View {
             .buttonStyle(.plain)
             .keyboardShortcut("0", modifiers: .command)
         }
+        .frame(maxHeight: .infinity)
         .panelStyle()
     }
 }
@@ -97,7 +100,7 @@ private struct InstrumentRow: View {
 
     private var row: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: Theme.Space.control) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Theme.accent.opacity(isActive ? 0.16 : 0.08))
@@ -105,10 +108,11 @@ private struct InstrumentRow: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.accent)
                 }
-                .frame(width: 26, height: 26)
+                .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: Theme.Space.tight) {
                     Text(instrument.name)
+                        .lineLimit(1)
                         .font(.system(size: 13, weight: isActive ? .semibold : .medium))
                         .foregroundStyle(Theme.text)
                     Text(instrument.subtitle)
@@ -132,8 +136,8 @@ private struct InstrumentRow: View {
                         .opacity(isActive ? 1 : 0.55)
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
+            .padding(.horizontal, Theme.Space.related)
+            .padding(.vertical, Theme.Space.related)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(

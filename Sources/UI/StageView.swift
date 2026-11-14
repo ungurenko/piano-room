@@ -8,10 +8,11 @@ struct StageView: View {
     var body: some View {
         VStack(spacing: 0) {
             topRow
+                .frame(minHeight: Theme.Space.section)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: Theme.Space.section)
 
-            VStack(spacing: 8) {
+            VStack(spacing: Theme.Space.related) {
                 Text(state.currentInstrument.name)
                     .font(.system(size: 44, weight: .semibold))
                     .tracking(-1.1)
@@ -23,19 +24,22 @@ struct StageView: View {
                 Text(state.currentInstrument.subtitle)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.muted)
+                    .multilineTextAlignment(.center)
                     .contentTransition(.opacity)
 
                 noteChips
-
-                if !state.pianoConnected && state.runningNotes.isEmpty {
-                    pianoHint
-                }
+                    .padding(.top, Theme.Space.related)
             }
             .animation(.easeInOut(duration: 0.18), value: state.currentInstrument.id)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: Theme.Space.section)
+
+            pianoHint
+                .opacity(!state.pianoConnected && state.runningNotes.isEmpty ? 1 : 0)
+                .allowsHitTesting(!state.pianoConnected && state.runningNotes.isEmpty)
+                .accessibilityHidden(state.pianoConnected || !state.runningNotes.isEmpty)
         }
-        .padding(22)
+        .padding(Theme.Space.group)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(stageBackground)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -47,44 +51,57 @@ struct StageView: View {
     }
 
     private var topRow: some View {
-        HStack {
-            Text("СЕЙЧАС ИГРАЕТ")
-                .font(.system(size: 10.5, weight: .semibold))
-                .tracking(1.1)
-                .foregroundStyle(Theme.mutedSoft)
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                Text("\(state.sampleRateLabel)")
-                Text("·")
-                Text("буфер \(state.bufferFrames)")
-                Text("·")
-                Text("≈ \(max(1, Int(state.latencyMilliseconds.rounded()))) мс")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.group) {
+                stageLabel
+                Spacer(minLength: Theme.Space.group)
+                audioStatus
             }
-            .font(.system(size: 10.5))
-            .foregroundStyle(Theme.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                Capsule().fill(Color.white.opacity(0.55))
-            )
-            .overlay(
-                Capsule().strokeBorder(Theme.line, lineWidth: 1)
-            )
+            VStack(alignment: .leading, spacing: Theme.Space.related) {
+                stageLabel
+                audioStatus
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
+    private var stageLabel: some View {
+        Text("СЕЙЧАС ИГРАЕТ")
+            .font(.system(size: 10.5, weight: .semibold))
+            .tracking(1.1)
+            .foregroundStyle(Theme.mutedSoft)
+            .fixedSize()
+    }
+
+    private var audioStatus: some View {
+        HStack(spacing: Theme.Space.tight) {
+            Text(state.sampleRateLabel)
+            Text("·")
+            Text("буфер \(state.bufferFrames)")
+            Text("·")
+            Text("≈ \(max(1, Int(state.latencyMilliseconds.rounded()))) мс")
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(Theme.muted)
+        .fixedSize()
+        .padding(.horizontal, Theme.Space.related)
+        .padding(.vertical, Theme.Space.tight)
+        .background(Capsule().fill(Color.white.opacity(0.55)))
+        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
+    }
+
     private var pianoHint: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Theme.Space.related) {
             Text("Подключи пианино USB-кабелем — звук пойдёт в его динамики")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.mutedSoft)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
 
             Button {
                 state.noteFromScreen(60, velocity: 100)
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: Theme.Space.tight) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 9, weight: .bold))
                     Text("Проверить звук")
@@ -92,7 +109,7 @@ struct StageView: View {
                 }
                 .foregroundStyle(Theme.accentDeep)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.vertical, Theme.Space.related)
                 .background(
                     Capsule().fill(Theme.accent.opacity(0.12))
                 )
@@ -102,11 +119,11 @@ struct StageView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.top, 4)
+        .padding(.top, Theme.Space.related)
     }
 
     private var noteChips: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Theme.Space.tight) {
             if state.runningNotes.isEmpty {
                 if state.pianoConnected {
                     Text("Нажми клавишу — звук уже здесь")
@@ -139,7 +156,7 @@ struct StageView: View {
                 }
             }
         }
-        .frame(height: 26)
+        .frame(height: Theme.Space.spacious)
         .animation(.easeOut(duration: 0.12), value: state.runningNotes)
     }
 

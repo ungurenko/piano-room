@@ -2,6 +2,22 @@ import SwiftUI
 
 /// Тёплая светлая палитра приложения.
 enum Theme {
+    /// Интервалы по близости: подпись, группа, содержимое панели, раздел экрана.
+    enum Space {
+        static let tight: CGFloat = 4
+        static let related: CGFloat = 8
+        static let control: CGFloat = 12
+        static let group: CGFloat = 16
+        static let section: CGFloat = 24
+        static let spacious: CGFloat = 32
+    }
+
+    enum Layout {
+        static let instrumentsWidth: CGFloat = 280
+        static let effectsWidth: CGFloat = 288
+        static let maximumWidth: CGFloat = 1568
+    }
+
     static let backgroundTop = Color(hex: 0xFFFAF2)
     static let background = Color(hex: 0xF5EFE5)
     static let backgroundBottom = Color(hex: 0xEDE2D2)

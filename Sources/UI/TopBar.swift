@@ -5,15 +5,24 @@ struct TopBar: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        HStack(spacing: 18) {
-            brand
-            Spacer(minLength: 8)
-            connectionStatus
-            Spacer(minLength: 8)
-            controls
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.section) {
+                brand
+                Spacer(minLength: Theme.Space.group)
+                connectionStatus
+                Spacer(minLength: Theme.Space.group)
+                controls
+            }
+            HStack(spacing: Theme.Space.section) {
+                VStack(alignment: .leading, spacing: Theme.Space.related) {
+                    brand
+                    connectionStatus
+                }
+                Spacer(minLength: Theme.Space.group)
+                controls
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
+        .padding(Theme.Space.group)
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -32,9 +41,9 @@ struct TopBar: View {
     // MARK: - Бренд
 
     private var brand: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: Theme.Space.control) {
             AppLogo(size: 34)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Theme.Space.tight) {
                 Text("Piano Room")
                     .font(.system(size: 15, weight: .semibold))
                     .tracking(-0.2)
@@ -81,7 +90,7 @@ struct TopBar: View {
     // MARK: - Управление
 
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Theme.Space.related) {
             outputMenu
             localSoundControl
             panicButton
@@ -98,7 +107,7 @@ struct TopBar: View {
             Image(systemName: "stop.circle")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.muted)
-                .frame(width: 34, height: 32)
+                .frame(width: 36, height: 36)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.white.opacity(0.55))
@@ -142,7 +151,7 @@ struct TopBar: View {
     }
 
     private var localSoundControl: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: Theme.Space.related) {
             Image(systemName: "pianokeys")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.muted)
@@ -158,8 +167,8 @@ struct TopBar: View {
             )
             .disabled(!state.pianoConnected)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Theme.Space.control)
+        .padding(.vertical, Theme.Space.related)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.45))
@@ -178,7 +187,7 @@ struct TopBar: View {
             Image(systemName: "gearshape")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.muted)
-                .frame(width: 34, height: 32)
+                .frame(width: 36, height: 36)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.white.opacity(0.55))

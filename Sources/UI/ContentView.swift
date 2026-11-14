@@ -20,24 +20,30 @@ struct ContentView: View {
                 .blur(radius: 130)
                 .offset(x: 460, y: -240)
 
-            VStack(spacing: 14) {
-                TopBar()
+            GeometryReader { geometry in
+                let inset = geometry.size.width < 1200 ? Theme.Space.group : Theme.Space.section
+                let keyboardHeight = min(208, max(160, geometry.size.height * 0.23))
 
-                HStack(spacing: 14) {
-                    InstrumentsPanel()
-                        .frame(width: 268)
-                    StageView()
-                    EffectsPanel()
-                        .frame(width: 306)
+                VStack(spacing: Theme.Space.group) {
+                    TopBar()
+
+                    HStack(alignment: .top, spacing: Theme.Space.group) {
+                        InstrumentsPanel()
+                            .frame(width: Theme.Layout.instrumentsWidth)
+                        StageView()
+                        EffectsPanel()
+                            .frame(width: Theme.Layout.effectsWidth)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .layoutPriority(1)
+
+                    KeyboardView()
+                        .frame(height: keyboardHeight)
                 }
-                .frame(minHeight: 320)
-
-                KeyboardView()
-                    .frame(height: 186)
+                .padding(inset)
+                .frame(maxWidth: Theme.Layout.maximumWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .padding(.top, 12)
 
             if state.isStarting {
                 StartingOverlay()

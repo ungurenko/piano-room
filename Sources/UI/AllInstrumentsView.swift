@@ -18,13 +18,13 @@ struct AllInstrumentsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Theme.Space.group) {
             header
             searchField
             categoryChips
 
             ScrollView {
-                LazyVStack(spacing: 3) {
+                LazyVStack(spacing: Theme.Space.tight) {
                     ForEach(filtered) { instrument in
                         row(instrument)
                     }
@@ -33,8 +33,8 @@ struct AllInstrumentsView: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .padding(20)
-        .frame(width: 760, height: 700)
+        .padding(Theme.Space.section)
+        .frame(width: 760, height: 640)
         .background(Theme.gradient)
     }
 
@@ -42,7 +42,7 @@ struct AllInstrumentsView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Theme.Space.tight) {
                 Text("Все инструменты")
                     .font(.system(size: 20, weight: .semibold))
                     .tracking(-0.4)
@@ -110,9 +110,9 @@ struct AllInstrumentsView: View {
 
     private var categoryChips: some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 148), spacing: 6, alignment: .leading)],
+            columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.related), count: 3),
             alignment: .leading,
-            spacing: 6
+            spacing: Theme.Space.related
         ) {
             chip(title: "Все", isActive: selectedCategory == nil) {
                 selectedCategory = nil
@@ -130,8 +130,9 @@ struct AllInstrumentsView: View {
             Text(title)
                 .font(.system(size: 11, weight: isActive ? .semibold : .regular))
                 .foregroundStyle(isActive ? Theme.accentDeep : Theme.muted)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Theme.Space.control)
+                .padding(.vertical, Theme.Space.tight)
                 .background(
                     Capsule()
                         .fill(isActive ? Theme.accent.opacity(0.14) : Color.white.opacity(0.45))
@@ -152,7 +153,7 @@ struct AllInstrumentsView: View {
             state.selectInstrument(instrument)
             dismiss()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: Theme.Space.control) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(Theme.accent.opacity(isActive ? 0.16 : 0.07))
@@ -162,7 +163,7 @@ struct AllInstrumentsView: View {
                 }
                 .frame(width: 24, height: 24)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: Theme.Space.tight) {
                     Text(instrument.name)
                         .font(.system(size: 12.5, weight: isActive ? .semibold : .regular))
                         .foregroundStyle(Theme.text)
@@ -184,8 +185,8 @@ struct AllInstrumentsView: View {
                         .foregroundStyle(Theme.accent)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, Theme.Space.control)
+            .padding(.vertical, Theme.Space.related)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(isActive ? Theme.accentPale.opacity(0.7) : Color.white.opacity(0.001))

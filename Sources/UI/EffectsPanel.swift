@@ -4,19 +4,24 @@ struct EffectsPanel: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(spacing: 13) {
+        VStack(spacing: Theme.Space.group) {
             PanelHeader(title: "Эффекты", trailing: "5")
 
-            reverb
-            delay
-            chorus
-            drive
-            equalizer
-
-            Spacer(minLength: 0)
+            ScrollView {
+                VStack(spacing: Theme.Space.group) {
+                    reverb
+                    delay
+                    chorus
+                    drive
+                    equalizer
+                }
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: .infinity, alignment: .top)
 
             master
         }
+        .frame(maxHeight: .infinity)
         .panelStyle()
     }
 
@@ -35,7 +40,7 @@ struct EffectsPanel: View {
     }
 
     private var delay: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: Theme.Space.related) {
             EffectSection(
                 title: "Дилей",
                 isOn: state.effects.delayOn,
@@ -81,7 +86,7 @@ struct EffectsPanel: View {
     }
 
     private var equalizer: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: Theme.Space.related) {
             HStack {
                 Text("Эквалайзер")
                     .font(.system(size: 12.5, weight: .medium))
@@ -133,7 +138,7 @@ struct EffectsPanel: View {
                 )
             )
         }
-        .padding(.top, 12)
+        .padding(.top, Theme.Space.group)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Theme.line)
@@ -151,7 +156,7 @@ private struct EffectSection: View {
     @Binding var value: Double
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: Theme.Space.related) {
             HStack {
                 Text(title)
                     .font(.system(size: 12.5, weight: .medium))
@@ -180,11 +185,10 @@ private struct SubFader: View {
             Text(title)
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.muted)
-                .frame(width: 38, alignment: .leading)
+                .frame(width: 40, alignment: .leading)
             Fader(value: $value)
                 .disabled(!isEnabled)
                 .opacity(isEnabled ? 1 : 0.45)
         }
-        .padding(.leading, 2)
     }
 }
