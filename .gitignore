@@ -1,0 +1,16 @@
+# Сгенерированный проект Xcode
+build/
+PianoRoom.xcodeproj/
+xcuserdata/
+*.xcuserstate
+
+# Банк рояля ~1,2 ГБ — скачивается отдельно
+Resources/SoundBanks/*.sf2
+
+# Скомпилированные утилиты
+Tools/*
+!Tools/*.swift
+!Tools/*.sh
+
+# Системный мусор
+.DS_Store
