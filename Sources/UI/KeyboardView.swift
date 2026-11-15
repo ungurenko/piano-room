@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct KeyboardView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
     private static let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     private static let blackClasses: Set<Int> = [1, 3, 6, 8, 10]
@@ -10,72 +10,58 @@ struct KeyboardView: View {
     private static let blackNotes: [Int] = allNotes.filter { blackClasses.contains($0 % 12) }
 
     var body: some View {
-        GeometryReader { geometry in
-            let whiteWidth = geometry.size.width / CGFloat(Self.whiteNotes.count)
-            let height = geometry.size.height
+        VStack(spacing: 11) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Theme.accent)
+                .frame(height: 3)
+                .accessibilityHidden(true)
 
-            ZStack(alignment: .topLeading) {
-                HStack(spacing: 0) {
-                    ForEach(Self.whiteNotes, id: \.self) { note in
-                        whiteKey(note: note, width: whiteWidth, height: height)
+            GeometryReader { geometry in
+                let whiteWidth = geometry.size.width / CGFloat(Self.whiteNotes.count)
+                let height = geometry.size.height
+
+                ZStack(alignment: .topLeading) {
+                    HStack(spacing: 0) {
+                        ForEach(Self.whiteNotes, id: \.self) { note in
+                            whiteKey(note: note, width: whiteWidth, height: height)
+                        }
+                    }
+
+                    ForEach(Self.blackNotes, id: \.self) { note in
+                        blackKey(note: note, width: whiteWidth * 0.58, height: height * 0.615)
+                            .offset(x: whiteWidth * CGFloat(Self.whitesBefore(note)) - whiteWidth * 0.29)
                     }
                 }
-
-                ForEach(Self.blackNotes, id: \.self) { note in
-                    blackKey(note: note, width: whiteWidth * 0.58, height: height * 0.60)
-                        .offset(x: whiteWidth * CGFloat(Self.whitesBefore(note)) - whiteWidth * 0.29)
-                }
+                .background(Theme.background)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Theme.keyBorder, lineWidth: 1)
+                )
             }
         }
-        .padding(.horizontal, Theme.Space.group)
-        .padding(.vertical, Theme.Space.control)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Theme.panel.opacity(0.55))
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
-        .shadow(color: Theme.shadow, radius: 18, x: 0, y: 9)
     }
 
     // MARK: - Клавиши
 
     private func whiteKey(note: Int, width: CGFloat, height: CGFloat) -> some View {
         let isActive = state.runningNotes.contains(UInt8(note))
+
         return ZStack(alignment: .bottom) {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 2,
-                bottomLeadingRadius: 7,
-                bottomTrailingRadius: 7,
-                topTrailingRadius: 2,
-                style: .continuous
-            )
-            .fill(
-                isActive
-                    ? LinearGradient(
-                        colors: [Color(hex: 0xFBE2BE), Color(hex: 0xEEC78D)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    : LinearGradient(
-                        colors: [Color(hex: 0xFFFEFB), Color(hex: 0xF2E9DB)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-            )
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color(hex: 0xE6DCCD))
-                    .frame(height: 1)
-            }
+            Rectangle()
+                .fill(
+                    isActive
+                        ? AnyShapeStyle(Theme.keyPressed)
+                        : AnyShapeStyle(LinearGradient(
+                            colors: [Theme.keyWhiteTop, Theme.keyWhiteBottom],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ))
+                )
 
             if note % 12 == 0 {
                 Text("C\(note / 12 - 1)")
-                    .font(.system(size: 8.5, weight: .medium))
+                    .font(Theme.ui(8.5, weight: .medium))
                     .foregroundStyle(Theme.mutedSoft)
                     .padding(.bottom, 6)
             }
@@ -83,10 +69,14 @@ struct KeyboardView: View {
         .frame(width: width, height: height)
         .overlay(alignment: .trailing) {
             Rectangle()
-                .fill(Theme.line)
+                .fill(Theme.keyBorder)
                 .frame(width: 1)
         }
-        .shadow(color: Theme.shadowSoft, radius: 2, x: 0, y: 1)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(isActive ? Theme.accent : Theme.keyBorder)
+                .frame(height: isActive ? 3 : 1)
+        }
         .contentShape(Rectangle())
         .gesture(
             SpatialTapGesture().onEnded { value in
@@ -96,31 +86,28 @@ struct KeyboardView: View {
                 )
             }
         )
-        .animation(.easeOut(duration: 0.08), value: isActive)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Self.noteNames[note % 12])\(note / 12 - 1)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { state.noteFromScreen(UInt8(note)) }
+        .animation(.easeOut(duration: 0.07), value: isActive)
     }
 
     private func blackKey(note: Int, width: CGFloat, height: CGFloat) -> some View {
         let isActive = state.runningNotes.contains(UInt8(note))
-        return RoundedRectangle(cornerRadius: 5, style: .continuous)
+
+        return RoundedRectangle(cornerRadius: 3, style: .continuous)
             .fill(
                 isActive
-                    ? LinearGradient(
-                        colors: [Color(hex: 0xC88A50), Color(hex: 0xA86A35)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    : LinearGradient(
-                        colors: [Color(hex: 0x4C4239), Color(hex: 0x241E19)],
-                        startPoint: .top, endPoint: .bottom
-                    )
+                    ? AnyShapeStyle(Theme.accent)
+                    : AnyShapeStyle(LinearGradient(
+                        colors: [Theme.keyBlackTop, Theme.keyBlackBottom],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
             )
             .frame(width: width, height: height)
-            .overlay(alignment: .bottom) {
-                Capsule()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: width * 0.55, height: 2)
-                    .padding(.bottom, 5)
-            }
-            .shadow(color: Color.black.opacity(0.22), radius: 1.5, x: 0, y: 1.5)
+            .shadow(color: .black.opacity(0.18), radius: 1, x: 0, y: 1)
             .contentShape(Rectangle())
             .gesture(
                 SpatialTapGesture().onEnded { value in
@@ -130,7 +117,11 @@ struct KeyboardView: View {
                     )
                 }
             )
-            .animation(.easeOut(duration: 0.08), value: isActive)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(Self.noteNames[note % 12])\(note / 12 - 1)")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { state.noteFromScreen(UInt8(note)) }
+            .animation(.easeOut(duration: 0.07), value: isActive)
     }
 
     // MARK: - Геометрия

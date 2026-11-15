@@ -1,48 +1,43 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
     var body: some View {
-        ZStack {
-            Theme.gradient
+        @Bindable var state = state
+        return ZStack {
+            Theme.background
                 .ignoresSafeArea()
 
-            // Мягкие световые пятна на фоне.
-            Circle()
-                .fill(Theme.accentPale.opacity(0.55))
-                .frame(width: 620, height: 620)
-                .blur(radius: 140)
-                .offset(x: -420, y: -300)
-            Circle()
-                .fill(Color(hex: 0xF8EEDF).opacity(0.7))
-                .frame(width: 520, height: 520)
-                .blur(radius: 130)
-                .offset(x: 460, y: -240)
+            VStack(spacing: 0) {
+                TopBar()
 
-            GeometryReader { geometry in
-                let inset = geometry.size.width < 1200 ? Theme.Space.group : Theme.Space.section
-                let keyboardHeight = min(208, max(160, geometry.size.height * 0.23))
+                GeometryReader { geometry in
+                    let keyboardHeight = min(
+                        Theme.Layout.keyboardMaxHeight,
+                        max(
+                            Theme.Layout.keyboardMinHeight,
+                            geometry.size.height * Theme.Layout.keyboardRatio
+                        )
+                    )
 
-                VStack(spacing: Theme.Space.group) {
-                    TopBar()
+                    VStack(spacing: Theme.Layout.keyboardGap) {
+                        HStack(alignment: .top, spacing: Theme.Layout.columnGap) {
+                            InstrumentsPanel()
+                                .frame(width: Theme.Layout.instrumentsWidth)
+                            StageView()
+                            EffectsPanel()
+                                .frame(width: Theme.Layout.effectsWidth)
+                        }
+                        .frame(maxHeight: .infinity)
 
-                    HStack(alignment: .top, spacing: Theme.Space.group) {
-                        InstrumentsPanel()
-                            .frame(width: Theme.Layout.instrumentsWidth)
-                        StageView()
-                        EffectsPanel()
-                            .frame(width: Theme.Layout.effectsWidth)
+                        KeyboardView()
+                            .frame(height: keyboardHeight)
                     }
-                    .frame(maxHeight: .infinity)
-                    .layoutPriority(1)
-
-                    KeyboardView()
-                        .frame(height: keyboardHeight)
+                    .padding(.horizontal, Theme.Layout.horizontalInset)
+                    .padding(.top, Theme.Layout.bodyTop)
+                    .padding(.bottom, Theme.Layout.bodyBottom)
                 }
-                .padding(inset)
-                .frame(maxWidth: Theme.Layout.maximumWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if state.isStarting {
@@ -55,7 +50,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $state.showAllInstruments) {
             AllInstrumentsView()
-                .environmentObject(state)
+                .environment(state)
         }
     }
 }
@@ -63,67 +58,82 @@ struct ContentView: View {
 // MARK: - Загрузка
 
 private struct StartingOverlay: View {
-    @State private var pulse = false
-
     var body: some View {
         ZStack {
-            Color(hex: 0xF5EFE5).opacity(0.72)
+            Theme.background.opacity(0.94)
                 .ignoresSafeArea()
-            VStack(spacing: 18) {
-                AppLogo(size: 58)
-                    .scaleEffect(pulse ? 1.04 : 0.98)
-                    .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: pulse)
+
+            VStack(spacing: 14) {
+                Wordmark(size: 20)
+
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.muted)
+                    .padding(.top, 6)
+
                 Text("Готовим рояль…")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(Theme.ui(14, weight: .medium))
                     .foregroundStyle(Theme.text)
+                    .padding(.top, 2)
+
                 Text("Загружаем звук, это займёт пару секунд")
-                    .font(.system(size: 12))
+                    .font(Theme.ui(11.5))
                     .foregroundStyle(Theme.muted)
             }
-            .padding(34)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Theme.panel.opacity(0.9))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(Theme.line, lineWidth: 1)
-            )
-            .shadow(color: Theme.shadow, radius: 30, x: 0, y: 14)
         }
-        .onAppear { pulse = true }
     }
 }
 
+// MARK: - Ошибка запуска
+
 private struct ErrorOverlay: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.openSettings) private var openSettings
     let message: String
 
     var body: some View {
         ZStack {
-            Color(hex: 0xF5EFE5).opacity(0.8)
+            Theme.background.opacity(0.94)
                 .ignoresSafeArea()
-            VStack(spacing: 14) {
+
+            VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 30, weight: .light))
-                    .foregroundStyle(Theme.accentDeep)
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(Theme.muted)
+
                 Text("Не получилось запустить звук")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(Theme.ui(15, weight: .semibold))
                     .foregroundStyle(Theme.text)
+
                 Text(message)
-                    .font(.system(size: 12))
+                    .font(Theme.ui(12))
                     .foregroundStyle(Theme.muted)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
+
+                HStack(spacing: 12) {
+                    OutlinePillButton(title: "Повторить") {
+                        state.retryAudio()
+                    }
+                    .keyboardShortcut(.defaultAction)
+
+                    Button("Настройки…") {
+                        openSettings()
+                    }
+                    .buttonStyle(.plain)
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.muted)
+
+                    Button("Закрыть") {
+                        state.startupError = nil
+                    }
+                    .buttonStyle(.plain)
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.muted)
+                }
+                .padding(.top, 6)
             }
             .padding(30)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Theme.panel.opacity(0.95))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(Theme.line, lineWidth: 1)
-            )
         }
     }
 }

@@ -2,9 +2,9 @@ import Foundation
 
 /// Каталог всех инструментов приложения.
 ///
-/// Первый и главный инструмент — качественный рояль из SF2-банка Salamander.
-/// Остальные 128 — стандартные программы General MIDI, которые играет системный
-/// синтезатор AUMIDISynth. Переключение между ними мгновенное, без загрузки банков.
+/// Главный рояль Salamander и три дополнительных фортепиано используют свои записи.
+/// Ещё 128 — стандартные программы General MIDI, которые играет системный
+/// синтезатор DLSMusicDevice. Переключение между ними мгновенное, без загрузки банков.
 enum InstrumentCatalog {
 
     // MARK: - Рояль
@@ -18,17 +18,42 @@ enum InstrumentCatalog {
         isFavorite: true
     )
 
+    // MARK: - Дополнительные фортепиано
+
+    static let sampledPianos: [Instrument] = [
+        Instrument(id: "piano-osiris", name: "Osiris Piano", subtitle: "Камерное фортепиано",
+                   source: .sampledPiano, assetPath: "Osiris/Instrument.sfz", category: .piano, isFavorite: true),
+        Instrument(id: "piano-headroom", name: "Headroom Piano", subtitle: "Рояль Yamaha C3",
+                   source: .sampledPiano, assetPath: "Headroom/Instrument.sfz", category: .piano, isFavorite: true),
+        Instrument(id: "piano-fuchs-mohr", name: "Fuchs & Möhr", subtitle: "Мягкое пианино",
+                   source: .sampledPiano, assetPath: "Fuchs/Instrument.sf2", category: .piano, isFavorite: true)
+    ]
+
     // MARK: - Избранные
 
-    /// Шесть инструментов на главном экране.
+    /// Инструменты на главном экране в порядке показа.
     static let favoriteIDs: [String] = [
         "grand-salamander",
+        "piano-osiris",
+        "piano-headroom",
+        "piano-fuchs-mohr",
         "gm-0",
         "gm-4",
         "gm-16",
         "gm-48",
         "gm-89"
     ]
+
+    /// Сохраняем прежние команды 1…6 независимо от порядка строк на экране.
+    private static let shortcutIDs: [String] = [
+        "grand-salamander", "gm-0", "gm-4", "gm-16", "gm-48", "gm-89",
+        "piano-osiris", "piano-headroom", "piano-fuchs-mohr"
+    ]
+
+    static func shortcut(for instrument: Instrument) -> String? {
+        guard let index = shortcutIDs.firstIndex(of: instrument.id) else { return nil }
+        return String(index + 1)
+    }
 
     static var favorites: [Instrument] {
         favoriteIDs.compactMap { id in all.first { $0.id == id } }
@@ -180,7 +205,7 @@ enum InstrumentCatalog {
         )
     }
 
-    static let all: [Instrument] = [grandPiano] + gm
+    static let all: [Instrument] = [grandPiano] + sampledPianos + gm
 
     static func instrument(id: String) -> Instrument? {
         all.first { $0.id == id }

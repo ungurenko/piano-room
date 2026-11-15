@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+bash Tools/download-pianos.sh
+
 echo "1/4 Генерируем проект…"
 xcodegen generate > /dev/null
 
@@ -19,7 +21,6 @@ fi
 echo "3/4 Устанавливаем в /Applications…"
 pkill -f "Piano Room.app" 2>/dev/null || true
 sleep 1
-rm -rf "/Applications/Piano Room.app"
 ditto "$APP" "/Applications/Piano Room.app"
 # LaunchServices иногда не успевает узнать перезаписанный бандл.
 sleep 1

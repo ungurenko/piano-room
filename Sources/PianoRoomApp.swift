@@ -6,16 +6,26 @@ private let appDelegateLogger = Logger(subsystem: "com.alexpianoroom.PianoRoom",
 @main
 struct PianoRoomApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var state = AppState()
+    @State private var state = AppState()
+
+    init() {
+        AppFonts.register()
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(state)
+                .environment(state)
                 .preferredColorScheme(.light)
                 .frame(minWidth: 1080, minHeight: 760)
+                .task {
+                    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+                       ProcessInfo.processInfo.environment["PIANOROOM_TESTING"] != "1" {
+                        state.start()
+                    }
+                }
                 .onAppear {
-                    appDelegate.onTerminate = state.onTerminate
+                    appDelegate.onShutdown = { await state.shutdown() }
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -26,18 +36,29 @@ struct PianoRoomApp: App {
 
         Settings {
             SettingsView()
-                .environmentObject(state)
+                .environment(state)
                 .preferredColorScheme(.light)
         }
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var onTerminate: (() -> Void)?
+    var onShutdown: (@MainActor () async -> Void)?
+    private var shutdownTask: Task<Void, Never>?
+    private var didFinishShutdown = false
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !didFinishShutdown, let onShutdown else { return .terminateNow }
+        guard shutdownTask == nil else { return .terminateLater }
         appDelegateLogger.info("Приложение завершается: возвращаем звук пианино")
-        onTerminate?()
+        shutdownTask = Task { @MainActor in
+            await onShutdown()
+            self.didFinishShutdown = true
+            self.shutdownTask = nil
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

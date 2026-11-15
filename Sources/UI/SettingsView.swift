@@ -2,44 +2,32 @@ import AppKit
 import CoreAudio
 import SwiftUI
 
+/// Окно настроек в теме «Белый лист»: белый холст, чернильные подписи,
+/// волосяные линии вместо карточек и один красный акцент в текстовых действиях.
 struct SettingsView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.section) {
+        VStack(alignment: .leading, spacing: 0) {
             soundSection
+            sectionDivider
             midiSection
+            sectionDivider
             pianoSection
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 24)
 
-            Button {
-                state.resetSettings()
-            } label: {
-                Label("Сбросить настройки", systemImage: "arrow.counterclockwise")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.muted)
-            }
-            .buttonStyle(.plain)
+            resetButton
+                .padding(.bottom, 16)
 
-            HStack {
-                Text("Piano Room 1.0")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.mutedSoft)
-                Spacer()
-                if state.isReady {
-                    Text("Движок готов")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color(hex: 0x6FAE72))
-                }
-            }
+            footer
         }
         .padding(24)
         .frame(width: 520, height: 600)
-        .background(Theme.gradient)
+        .background(Theme.background)
         .onAppear {
             // Системный заголовок окна настроек на русском.
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 for window in NSApp.windows where window.title.contains("Settings") {
                     window.title = "Настройки Piano Room"
                 }
@@ -50,156 +38,212 @@ struct SettingsView: View {
     // MARK: - Звук
 
     private var soundSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.control) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionTitle("Звук")
 
-            HStack {
-                Text("Аудиовыход")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Picker("", selection: outputBinding) {
+            settingRow("Аудиовыход") {
+                Picker("Аудиовыход", selection: outputBinding) {
                     ForEach(state.audioOutputs) { device in
                         Text(device.name).tag(Optional(device.id))
                     }
                 }
                 .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
                 .frame(width: 240, alignment: .trailing)
             }
 
-            HStack {
-                Text("Буфер")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Picker("", selection: bufferBinding) {
+            Hairline(color: Theme.line)
+
+            settingRow("Буфер") {
+                Picker("Размер буфера", selection: bufferBinding) {
                     Text("64 — минимум задержки").tag(UInt32(64))
                     Text("128 — баланс").tag(UInt32(128))
                     Text("256 — стабильнее").tag(UInt32(256))
                     Text("512 — максимум стабильности").tag(UInt32(512))
                 }
                 .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
                 .frame(width: 240, alignment: .trailing)
             }
 
-            Button {
-                state.noteFromScreen(60)
-            } label: {
-                Label("Проверить звук", systemImage: "play.circle")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.accentDeep)
+            testSoundButton
+                .padding(.top, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.group)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
+    }
+
+    /// Текстовое действие секции «Звук»: без фона и рамки, чернильный акцент.
+    private var testSoundButton: some View {
+        Button {
+            state.noteFromScreen(60)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .medium))
+                Text("Проверить звук")
+                    .font(Theme.ui(11.5, weight: .medium))
+            }
+            .foregroundStyle(Theme.accentDeep)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - MIDI
 
     private var midiSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.control) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionTitle("MIDI")
 
-            HStack {
-                Text("Вход")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Picker("", selection: sourceBinding) {
+            settingRow("Вход") {
+                Picker("MIDI-вход", selection: sourceBinding) {
                     Text("Не выбран").tag(Optional<Int32>.none)
                     ForEach(state.midiSources) { source in
                         Text(source.name).tag(Optional(source.id))
                     }
                 }
                 .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
                 .frame(width: 240, alignment: .trailing)
             }
 
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(state.pianoConnected ? Color(hex: 0x6FAE72) : Theme.mutedSoft)
-                    .frame(width: 6, height: 6)
-                Text(state.pianoConnected ? "Grace CP-250 подключено" : "Пианино не найдено")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.muted)
-            }
+            midiStatusRow
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var midiStatusRow: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(state.pianoConnected ? Theme.success : Theme.mutedSoft)
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+
+            Text(state.pianoConnected ? "Grace CP-250 подключено" : "Пианино не найдено")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
+
+            Spacer(minLength: 12)
 
             Button {
                 state.refreshAudioDevices()
-                if let piano = state.midiSources.first(where: { $0.name.lowercased().contains("5704") || $0.name.lowercased().contains("piano") }) {
-                    state.selectMIDISource(piano)
-                }
             } label: {
-                Label("Обновить список", systemImage: "arrow.clockwise")
-                    .font(.system(size: 12))
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Обновить список")
+                        .font(Theme.ui(11.5, weight: .medium))
+                }
+                .foregroundStyle(Theme.accentDeep)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Theme.accentDeep)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.group)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
     }
 
-    // MARK: - Пианино
+    // MARK: - Встроенный звук пианино
 
     private var pianoSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.control) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionTitle("Встроенный звук пианино")
 
-            Toggle(isOn: Binding(
-                get: { !state.localSoundMuted },
-                set: { _ in state.toggleLocalSound() }
-            )) {
-                Text("Звук пианино включён")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.text)
+            settingRow("Звук пианино включён") {
+                Toggle("Звук пианино включён", isOn: localSoundBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Theme.text)
+                    .disabled(!state.pianoConnected)
             }
-            .toggleStyle(.switch)
-            .tint(Theme.accent)
-            .disabled(!state.pianoConnected)
 
             Text("Когда выключен, пианино работает только как клавиатура, а звук даёт Piano Room.")
-                .font(.system(size: 11))
+                .font(Theme.ui(11))
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Space.group)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
     }
 
-    // MARK: - Внутреннее
+    // MARK: - Нижняя часть
+
+    private var resetButton: some View {
+        Button {
+            state.resetSettings()
+        } label: {
+            Label("Сбросить настройки", systemImage: "arrow.counterclockwise")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.muted)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline(color: Theme.line)
+
+            HStack(spacing: 8) {
+                Text("Piano Room 1.0")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.mutedSoft)
+
+                Spacer(minLength: 12)
+
+                if state.isReady {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Theme.success)
+                            .frame(width: 5, height: 5)
+                            .accessibilityHidden(true)
+                        Text("Движок готов")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+            }
+            .padding(.top, 12)
+        }
+    }
+
+    // MARK: - Каркас секций
 
     private func sectionTitle(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(1.0)
-            .foregroundStyle(Theme.muted)
+        Text(title)
+            .font(Theme.ui(12.5, weight: .semibold))
+            .foregroundStyle(Theme.text)
+            .padding(.bottom, 8)
     }
+
+    /// Строка настройки: подпись слева, контрол справа, высота 36 + 6 pt воздуха.
+    private func settingRow<Control: View>(
+        _ title: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(Theme.ui(12.5))
+                .foregroundStyle(Theme.text)
+                .fixedSize()
+
+            Spacer(minLength: 12)
+
+            control()
+        }
+        .frame(height: 36)
+        .padding(.vertical, 6)
+    }
+
+    /// Между секциями 26 pt и волосяная линия по центру воздуха.
+    private var sectionDivider: some View {
+        Hairline(color: Theme.line)
+            .padding(.top, 13)
+            .padding(.bottom, 12)
+    }
+
+    // MARK: - Биндинги
 
     private var outputBinding: Binding<AudioDeviceID?> {
         Binding(
@@ -215,7 +259,11 @@ struct SettingsView: View {
         Binding(
             get: { state.selectedSourceID },
             set: { newValue in
-                guard let id = newValue, let source = state.midiSources.first(where: { $0.id == id }) else { return }
+                guard let id = newValue else {
+                    state.disconnectMIDISource()
+                    return
+                }
+                guard let source = state.midiSources.first(where: { $0.id == id }) else { return }
                 state.selectMIDISource(source)
             }
         )
@@ -225,6 +273,13 @@ struct SettingsView: View {
         Binding(
             get: { state.bufferFrames },
             set: { state.setBufferFrames($0) }
+        )
+    }
+
+    private var localSoundBinding: Binding<Bool> {
+        Binding(
+            get: { !state.localSoundMuted },
+            set: { _ in state.toggleLocalSound() }
         )
     }
 }

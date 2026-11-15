@@ -1,7 +1,10 @@
+import Foundation
 import SwiftUI
 
+/// Каталог всех инструментов в теме «Белый лист»:
+/// белый холст, чернильная типографика, волосяные линии и один акцент — красный фетр.
 struct AllInstrumentsView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
 
     @State private var search = ""
@@ -18,58 +21,50 @@ struct AllInstrumentsView: View {
     }
 
     var body: some View {
-        VStack(spacing: Theme.Space.group) {
+        VStack(alignment: .leading, spacing: 14) {
             header
             searchField
             categoryChips
 
-            ScrollView {
-                LazyVStack(spacing: Theme.Space.tight) {
-                    ForEach(filtered) { instrument in
-                        row(instrument)
-                    }
-                }
-                .padding(.vertical, 4)
+            if filtered.isEmpty {
+                emptyState
+            } else {
+                instrumentList
             }
-            .scrollContentBackground(.hidden)
         }
-        .padding(Theme.Space.section)
-        .frame(width: 760, height: 640)
-        .background(Theme.gradient)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 22)
+        .frame(width: 760, height: 700)
+        .background(Theme.background)
+        .onExitCommand { dismiss() }
     }
 
     // MARK: - Шапка
 
     private var header: some View {
-        HStack {
+        HStack(alignment: .center, spacing: Theme.Space.group) {
             VStack(alignment: .leading, spacing: Theme.Space.tight) {
                 Text("Все инструменты")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(Theme.display(22))
                     .tracking(-0.4)
                     .foregroundStyle(Theme.text)
-                Text("128 программ General MIDI и рояль Salamander")
-                    .font(.system(size: 11.5))
+                Text("4 фортепиано и 128 тембров General MIDI")
+                    .font(Theme.ui(11.5))
                     .foregroundStyle(Theme.muted)
             }
-            Spacer()
-            Text("\(filtered.count)")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.accentDeep)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Theme.accent.opacity(0.12)))
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.muted)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        Circle().fill(Color.white.opacity(0.6))
-                    )
+
+            Spacer(minLength: Theme.Space.group)
+
+            HStack(spacing: Theme.Space.related) {
+                Text("\(filtered.count) из \(InstrumentCatalog.all.count)")
+                    .font(Theme.ui(10.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.mutedSoft)
+                    .fixedSize()
+
+                IconButton(systemName: "xmark", title: "Закрыть список инструментов") {
+                    dismiss()
+                }
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -78,11 +73,15 @@ struct AllInstrumentsView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundStyle(Theme.mutedSoft)
+
             TextField("Найти инструмент", text: $search)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(Theme.ui(12.5))
+                .foregroundStyle(Theme.text)
+                .accessibilityLabel("Найти инструмент")
+
             if !search.isEmpty {
                 Button {
                     search = ""
@@ -92,16 +91,17 @@ struct AllInstrumentsView: View {
                         .foregroundStyle(Theme.mutedSoft)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Очистить поиск")
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 38)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color.white.opacity(0.6))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Theme.lineSoft)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Theme.line, lineWidth: 1)
         )
     }
@@ -110,9 +110,9 @@ struct AllInstrumentsView: View {
 
     private var categoryChips: some View {
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.related), count: 3),
+            columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 3),
             alignment: .leading,
-            spacing: Theme.Space.related
+            spacing: 7
         ) {
             chip(title: "Все", isActive: selectedCategory == nil) {
                 selectedCategory = nil
@@ -128,71 +128,137 @@ struct AllInstrumentsView: View {
     private func chip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
-                .foregroundStyle(isActive ? Theme.accentDeep : Theme.muted)
+                .font(Theme.ui(11.5, weight: isActive ? .medium : .regular))
+                .foregroundStyle(isActive ? Color.white : Theme.muted)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Theme.Space.control)
-                .padding(.vertical, Theme.Space.tight)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
                 .background(
-                    Capsule()
-                        .fill(isActive ? Theme.accent.opacity(0.14) : Color.white.opacity(0.45))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isActive ? Theme.text : Theme.lineSoft)
                 )
-                .overlay(
-                    Capsule()
-                        .strokeBorder(isActive ? Theme.accent.opacity(0.25) : Theme.line, lineWidth: 1)
-                )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 
-    // MARK: - Строка
+    // MARK: - Список
 
-    private func row(_ instrument: Instrument) -> some View {
-        let isActive = state.currentInstrument.id == instrument.id
-        return Button {
-            state.selectInstrument(instrument)
-            dismiss()
-        } label: {
-            HStack(spacing: Theme.Space.control) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Theme.accent.opacity(isActive ? 0.16 : 0.07))
-                    Image(systemName: instrument.symbolName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.accent)
-                }
-                .frame(width: 24, height: 24)
-
-                VStack(alignment: .leading, spacing: Theme.Space.tight) {
-                    Text(instrument.name)
-                        .font(.system(size: 12.5, weight: isActive ? .semibold : .regular))
-                        .foregroundStyle(Theme.text)
-                    Text(instrument.subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.mutedSoft)
-                }
-
-                Spacer()
-
-                Text(instrument.category.rawValue)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.mutedSoft)
-                    .lineLimit(1)
-
-                if isActive {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Theme.accent)
+    private var instrumentList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(filtered) { instrument in
+                    CatalogRow(
+                        instrument: instrument,
+                        catalogIndex: InstrumentCatalog.all.firstIndex { $0.id == instrument.id } ?? 0,
+                        isActive: state.currentInstrument.id == instrument.id
+                    ) {
+                        state.selectInstrument(instrument)
+                        dismiss()
+                    }
                 }
             }
-            .padding(.horizontal, Theme.Space.control)
-            .padding(.vertical, Theme.Space.related)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isActive ? Theme.accentPale.opacity(0.7) : Color.white.opacity(0.001))
-            )
+        }
+        .scrollIndicators(.hidden)
+        .scrollContentBackground(.hidden)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: - Пустое состояние
+
+    private var emptyState: some View {
+        VStack(spacing: Theme.Space.tight) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 20))
+                .foregroundStyle(Theme.mutedSoft)
+                .padding(.bottom, Theme.Space.tight)
+
+            Text("Ничего не нашлось")
+                .font(Theme.ui(13, weight: .medium))
+                .foregroundStyle(Theme.text)
+
+            Text("Попробуй другое слово или сбрось фильтр")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+
+            OutlinePillButton(title: "Сбросить фильтр") {
+                search = ""
+                selectedCategory = nil
+            }
+            .accessibilityLabel("Сбросить фильтр")
+            .padding(.top, Theme.Space.control)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Строка каталога
+
+private struct CatalogRow: View {
+    let instrument: Instrument
+    /// Индекс в полном каталоге, а не в отфильтрованном списке.
+    let catalogIndex: Int
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    private var rowBackground: Color {
+        if isActive { return Theme.accentWash }
+        return isHovering ? Theme.hover : Color.clear
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Text(String(format: "%03d", catalogIndex + 1))
+                        .font(Theme.ui(9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Theme.mutedSoft)
+                        .frame(width: 32, alignment: .leading)
+
+                    Text(instrument.name)
+                        .font(Theme.ui(12.5, weight: isActive ? .semibold : .regular))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+
+                    Spacer(minLength: Theme.Space.control)
+
+                    Text(instrument.category.rawValue)
+                        .font(Theme.ui(10))
+                        .foregroundStyle(Theme.mutedSoft)
+                        .lineLimit(1)
+
+                    // Место под галочку зарезервировано всегда, чтобы колонка
+                    // категорий не прыгала у выбранной строки.
+                    ZStack {
+                        if isActive {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                    .frame(width: 12)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 46)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(rowBackground)
+                )
+
+                Hairline(color: Theme.lineSoft)
+                    .padding(.leading, 42)
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityLabel(instrument.name)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 }

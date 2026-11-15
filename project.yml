@@ -8,7 +8,11 @@ options:
 
 settings:
   base:
-    SWIFT_VERSION: "5.0"
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+    HEADER_SEARCH_PATHS: "$(SRCROOT)/ThirdParty/SignalsmithDSP/include $(SRCROOT)/ThirdParty/SignalsmithDSP"
+    SWIFT_OBJC_BRIDGING_HEADER: Sources/Audio/AudioBridge.h
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: "-"
@@ -24,10 +28,20 @@ targets:
     sources:
       - path: Sources
       - path: Resources
+        excludes:
+          - Instruments
+      - path: Resources/Instruments
+        type: folder
+      - path: ThirdParty/SFZPlayer
+        excludes:
+          - "**/LICENSE*"
+          - "**/*.md"
+          - RIFF.cpp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alexpianoroom.PianoRoom
         PRODUCT_NAME: Piano Room
+        PRODUCT_MODULE_NAME: PianoRoom
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: YES
@@ -39,3 +53,29 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         SWIFT_OPTIMIZATION_LEVEL: "-O"
+
+  PianoRoomTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: PianoRoom
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alexpianoroom.PianoRoomTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Piano Room.app/Contents/MacOS/Piano Room"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  PianoRoom:
+    build:
+      targets:
+        PianoRoom: all
+        PianoRoomTests: [test]
+    test:
+      environmentVariables:
+        PIANOROOM_TESTING: "1"
+      targets:
+        - PianoRoomTests

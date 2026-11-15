@@ -12,7 +12,7 @@
 
 ## General MIDI
 
-128 инструментов GM играет системный синтезатор Apple **AUMIDISynth** (macOS),
+128 инструментов GM играет системный синтезатор Apple **DLSMusicDevice** (macOS),
 отдельных файлов не требуется.
 
 ## Иконка
@@ -22,3 +22,17 @@
 ## Код
 
 MIT, см. [LICENSE](LICENSE).
+
+## Реверберация Signalsmith
+
+Алгоритм основан на [Signalsmith Basics](https://github.com/Signalsmith-Audio/basics), автор Geraint Luff / Signalsmith Audio; MIT. Вспомогательные алгоритмы — [Signalsmith DSP](https://github.com/Signalsmith-Audio/dsp) v1.7.1, MIT.
+
+Версии и изменения описаны в `ThirdParty/SignalsmithReverb/README.md`. Полные лицензии входят в приложение в `ThirdPartyNotices.txt`.
+
+## Дополнительные акустические инструменты
+
+- [Osiris Piano](https://github.com/sfzinstruments/Osiris_Piano), CC0.
+- [Headroom Piano](https://github.com/sfzinstruments/BengtNilsson.HeadroomPiano), Bengt Nilsson, CC BY 4.0.
+- [Fuchs & Möhr Felt Piano](https://www.polyphone.io/en/forum/your-creations/850-acoustic-felt-piano-upright-fuchs-mohr), Tom Guder, public domain.
+
+Оригинальные записи сохраняются без потери качества. Подготовка SFZ описана рядом с библиотеками в `TRANSFORMATIONS.txt`; скрипт `Tools/download-pianos.sh` фиксирует источники и контрольные суммы. Проигрыватель использует MIT-компоненты SFZPlayer и dr_flac, лицензии находятся в `ThirdParty` и внутри приложения.

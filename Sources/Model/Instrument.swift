@@ -1,20 +1,24 @@
 import Foundation
 
 /// Откуда берётся звук инструмента.
-enum InstrumentSource: String, Codable {
+enum InstrumentSource: String, Codable, Sendable {
     /// Качественный рояль из SF2-банка через AUSampler.
     case grandPiano
-    /// General MIDI-программа через AUMIDISynth (мгновенное переключение, без загрузки банков).
+    /// General MIDI-программа через DLSMusicDevice (мгновенное переключение, без загрузки банков).
     case gm
+    /// Дополнительное фортепиано из собственной библиотеки записей.
+    case sampledPiano
 }
 
-struct Instrument: Identifiable, Hashable {
+struct Instrument: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let subtitle: String
     let source: InstrumentSource
     /// Номер программы General MIDI (0…127), нужен только для .gm.
     let gmProgram: Int?
+    /// Путь внутри Resources/Instruments для дополнительной библиотеки.
+    let assetPath: String?
     let category: GMCategory
     var isFavorite: Bool
 
@@ -24,6 +28,7 @@ struct Instrument: Identifiable, Hashable {
         subtitle: String,
         source: InstrumentSource,
         gmProgram: Int? = nil,
+        assetPath: String? = nil,
         category: GMCategory,
         isFavorite: Bool = false
     ) {
@@ -32,12 +37,13 @@ struct Instrument: Identifiable, Hashable {
         self.subtitle = subtitle
         self.source = source
         self.gmProgram = gmProgram
+        self.assetPath = assetPath
         self.category = category
         self.isFavorite = isFavorite
     }
 }
 
-enum GMCategory: String, CaseIterable, Identifiable {
+enum GMCategory: String, CaseIterable, Identifiable, Sendable {
     case piano = "Пианино"
     case chromatic = "Хроматическая перкуссия"
     case organ = "Орган"

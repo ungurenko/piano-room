@@ -1,47 +1,119 @@
 import SwiftUI
 
 struct EffectsPanel: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
+    @State private var reverbExpanded = false
 
     var body: some View {
-        VStack(spacing: Theme.Space.group) {
-            PanelHeader(title: "Эффекты", trailing: "5")
+        VStack(spacing: 0) {
+            header
 
             ScrollView {
-                VStack(spacing: Theme.Space.group) {
+                VStack(spacing: 0) {
                     reverb
+                    Hairline(color: Theme.lineSoft)
                     delay
+                    Hairline(color: Theme.lineSoft)
                     chorus
+                    Hairline(color: Theme.lineSoft)
                     drive
+                    Hairline(color: Theme.lineSoft)
                     equalizer
                 }
             }
             .scrollIndicators(.hidden)
             .frame(maxHeight: .infinity, alignment: .top)
 
-            master
+            volume
         }
         .frame(maxHeight: .infinity)
-        .panelStyle()
     }
 
-    // MARK: - Секции
+    // MARK: - Шапка
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Эффекты")
+                    .font(Theme.ui(12.5, weight: .medium))
+                    .foregroundStyle(Theme.textSoft)
+                Spacer()
+                Text("5")
+                    .font(Theme.ui(10))
+                    .foregroundStyle(Theme.mutedSoft)
+            }
+            .padding(.bottom, 10)
+
+            Hairline()
+        }
+    }
+
+    // MARK: - Эффекты
 
     private var reverb: some View {
-        EffectSection(
-            title: "Реверберация",
-            isOn: state.effects.reverbOn,
-            toggle: { state.toggleReverb() },
-            value: Binding(
-                get: { state.effects.reverb },
-                set: { state.setReverb($0) }
+        VStack(spacing: 8) {
+            effectRow(
+                title: "Реверберация",
+                isOn: state.effects.reverbOn,
+                toggle: { state.toggleReverb() },
+                value: Binding(get: { state.effects.reverb }, set: { state.setReverb($0) })
             )
-        )
+            Picker("Пространство", selection: Binding(
+                get: { state.effects.reverbParameters.presetID },
+                set: { state.selectReverbPreset($0) }
+            )) {
+                ForEach(ReverbParameters.presets) { preset in
+                    Text(preset.name).tag(preset.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .accessibilityLabel("Пространство реверберации")
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            DisclosureGroup(isExpanded: $reverbExpanded) {
+                VStack(spacing: 8) {
+                    reverbFader("Хвост", keyPath: \.decaySeconds, range: 0.3...20, unit: "с")
+                    reverbFader("Размер", keyPath: \.size)
+                    reverbFader("Пауза", keyPath: \.preDelayMs, range: 0...100, unit: "мс")
+                    reverbFader("Тембр", keyPath: \.tone)
+                    reverbFader("Ширина", keyPath: \.width)
+                    reverbFader("Движение", keyPath: \.modulation)
+                    Button("Сбросить пресет") { state.resetReverbPreset() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.textSoft)
+                        .disabled(!state.effects.reverbParameters.isModified)
+                }
+                .padding(.top, 8)
+            } label: {
+                Text(state.effects.reverbParameters.isModified ? "Настроить · изменён" : "Настроить")
+            }
+            .font(Theme.ui(10.5))
+            .foregroundStyle(Theme.textSoft)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func reverbFader(_ title: String, keyPath: WritableKeyPath<ReverbParameters, Float>,
+                             range: ClosedRange<Float> = 0...1, unit: String = "%") -> some View {
+        let parameter = state.effects.reverbParameters[keyPath: keyPath]
+        let display = unit == "%" ? parameter * 100 : parameter
+        return VStack(spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(unit == "с" ? String(format: "%.1f %@", display, unit) : "\(Int(display.rounded())) \(unit)")
+            }
+            MinimalFader(value: Binding(
+                get: { Double((state.effects.reverbParameters[keyPath: keyPath] - range.lowerBound) / (range.upperBound - range.lowerBound)) },
+                set: { state.updateReverbParameter(keyPath, value: range.lowerBound + Float($0) * (range.upperBound - range.lowerBound)) }
+            ), title: title, isEnabled: state.effects.reverbOn)
+        }
     }
 
     private var delay: some View {
-        VStack(spacing: Theme.Space.related) {
-            EffectSection(
+        VStack(spacing: 0) {
+            effectRow(
                 title: "Дилей",
                 isOn: state.effects.delayOn,
                 toggle: { state.toggleDelay() },
@@ -50,7 +122,8 @@ struct EffectsPanel: View {
                     set: { state.setDelay($0) }
                 )
             )
-            SubFader(
+
+            subFader(
                 title: "Время",
                 value: Binding(
                     get: { state.effects.delayTime },
@@ -58,11 +131,12 @@ struct EffectsPanel: View {
                 ),
                 isEnabled: state.effects.delayOn
             )
+            .padding(.bottom, 9)
         }
     }
 
     private var chorus: some View {
-        EffectSection(
+        effectRow(
             title: "Хорус",
             isOn: state.effects.chorusOn,
             toggle: { state.toggleChorus() },
@@ -74,7 +148,7 @@ struct EffectsPanel: View {
     }
 
     private var drive: some View {
-        EffectSection(
+        effectRow(
             title: "Перегруз",
             isOn: state.effects.driveOn,
             toggle: { state.toggleDrive() },
@@ -86,20 +160,24 @@ struct EffectsPanel: View {
     }
 
     private var equalizer: some View {
-        VStack(spacing: Theme.Space.related) {
-            HStack {
-                Text("Эквалайзер")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                ToggleSwitch(
-                    isOn: Binding(
-                        get: { state.effects.eqOn },
-                        set: { _ in state.toggleEQ() }
-                    )
-                )
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    EffectDotToggle(
+                        isOn: state.effects.eqOn,
+                        title: "Эквалайзер"
+                    ) {
+                        state.toggleEQ()
+                    }
+                    Text("Эквалайзер")
+                        .font(Theme.ui(12.5, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                }
             }
-            SubFader(
+            .padding(.vertical, 9)
+
+            subFader(
                 title: "Низ",
                 value: Binding(
                     get: { state.effects.eqLow },
@@ -107,7 +185,9 @@ struct EffectsPanel: View {
                 ),
                 isEnabled: state.effects.eqOn
             )
-            SubFader(
+            .padding(.bottom, 7)
+
+            subFader(
                 title: "Верх",
                 value: Binding(
                     get: { state.effects.eqHigh },
@@ -115,80 +195,85 @@ struct EffectsPanel: View {
                 ),
                 isEnabled: state.effects.eqOn
             )
+            .padding(.bottom, 9)
         }
     }
 
-    // MARK: - Мастер
+    // MARK: - Громкость
 
-    private var master: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Громкость")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Text("\(Int(state.masterVolume * 100))%")
-                    .font(.system(size: 11, weight: .regular).monospacedDigit())
-                    .foregroundStyle(Theme.muted)
-            }
-            Fader(
-                value: Binding(
-                    get: { state.masterVolume },
-                    set: { state.setMasterVolume($0) }
+    private var volume: some View {
+        VStack(spacing: 0) {
+            Hairline()
+
+            VStack(spacing: 9) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Громкость")
+                        .font(Theme.ui(12.5, weight: .medium))
+                        .foregroundStyle(Theme.textSoft)
+                    Spacer()
+                    Text("\(Int((state.masterVolume * 100).rounded()))%")
+                        .font(Theme.display(19))
+                        .foregroundStyle(Theme.text)
+                }
+
+                MinimalFader(
+                    value: Binding(
+                        get: { state.masterVolume },
+                        set: { state.setMasterVolume($0) }
+                    ),
+                    title: "Общая громкость"
                 )
-            )
-        }
-        .padding(.top, Theme.Space.group)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Theme.line)
-                .frame(height: 1)
+            }
+            .padding(.top, 12)
         }
     }
-}
 
-// MARK: - Секция эффекта
+    // MARK: - Строки
 
-private struct EffectSection: View {
-    let title: String
-    let isOn: Bool
-    let toggle: () -> Void
-    @Binding var value: Double
-
-    var body: some View {
-        VStack(spacing: Theme.Space.related) {
-            HStack {
+    private func effectRow(
+        title: String,
+        isOn: Bool,
+        toggle: @escaping () -> Void,
+        value: Binding<Double>
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                EffectDotToggle(isOn: isOn, title: title, action: toggle)
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Theme.text)
+                    .font(Theme.ui(12.5, weight: .medium))
+                    .foregroundStyle(isOn ? Theme.text : Theme.text.opacity(0.6))
                 Spacer()
-                ToggleSwitch(
-                    isOn: Binding(get: { isOn }, set: { _ in toggle() })
-                )
             }
-            Fader(value: $value)
-                .disabled(!isOn)
-                .opacity(isOn ? 1 : 0.45)
+
+            MinimalFader(
+                value: value,
+                title: title,
+                isEnabled: isOn
+            )
+            .padding(.top, 7)
+            .padding(.leading, 30)
         }
+        .padding(.vertical, 9)
     }
-}
 
-// MARK: - Дополнительный ползунок
-
-private struct SubFader: View {
-    let title: String
-    @Binding var value: Double
-    let isEnabled: Bool
-
-    var body: some View {
+    private func subFader(
+        title: String,
+        value: Binding<Double>,
+        isEnabled: Bool
+    ) -> some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 10.5))
+                .font(Theme.ui(10.5))
                 .foregroundStyle(Theme.muted)
-                .frame(width: 40, alignment: .leading)
-            Fader(value: $value)
-                .disabled(!isEnabled)
-                .opacity(isEnabled ? 1 : 0.45)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: 38, alignment: .leading)
+            MinimalFader(
+                value: value,
+                title: title,
+                isEnabled: isEnabled
+            )
         }
+        .padding(.leading, 30)
     }
 }

@@ -7,66 +7,43 @@ import Foundation
 struct MIDIParser {
 
     private var runningStatus: UInt8 = 0
-    private var leftover: [UInt8] = []
+    private var firstDataByte: UInt8?
+    private var isInSysEx = false
 
     mutating func reset() {
         runningStatus = 0
-        leftover = []
+        firstDataByte = nil
+        isInSysEx = false
     }
 
     /// Разобрать очередную порцию байтов.
     mutating func parse(_ bytes: [UInt8]) -> [MIDIEvent] {
         var events: [MIDIEvent] = []
-        var data = leftover
-        data.append(contentsOf: bytes)
-        leftover = []
-
-        var index = 0
-        while index < data.count {
-            let byte = data[index]
-
-            // Служебные сообщения реального времени можно игнорировать.
-            if byte >= 0xF8 {
-                index += 1
-                continue
-            }
+        for byte in bytes {
+            // Realtime может стоять даже между двумя байтами одной ноты.
+            if byte >= 0xF8 { continue }
 
             if byte & 0x80 != 0 {
-                if byte >= 0xF0 {
-                    runningStatus = 0
-                    if byte == 0xF0 {
-                        // SysEx: пропускаем до конца сообщения.
-                        index += 1
-                        while index < data.count && data[index] != 0xF7 { index += 1 }
-                        if index < data.count { index += 1 }
-                    } else {
-                        index += 1
-                    }
-                    continue
-                }
-                runningStatus = byte
-                index += 1
+                // Любой следующий статус завершает незаконченное сообщение,
+                // включая SysEx без явного F7.
+                firstDataByte = nil
+                isInSysEx = byte == 0xF0
+                runningStatus = byte < 0xF0 ? byte : 0
                 continue
             }
 
-            guard runningStatus != 0 else {
-                index += 1
-                continue
-            }
+            guard !isInSysEx, runningStatus != 0 else { continue }
 
             let type = runningStatus & 0xF0
             let channel = runningStatus & 0x0F
-            let dataCount = (type == 0xC0 || type == 0xD0) ? 1 : 2
-
-            guard index + dataCount <= data.count else {
-                leftover = Array(data[index...])
-                return events
+            if type == 0xC0 || type == 0xD0 {
+                append(type: type, channel: channel, first: byte, second: 0, into: &events)
+            } else if let first = firstDataByte {
+                append(type: type, channel: channel, first: first, second: byte, into: &events)
+                firstDataByte = nil
+            } else {
+                firstDataByte = byte
             }
-
-            let first = data[index]
-            let second = dataCount == 2 ? data[index + 1] : 0
-            append(type: type, channel: channel, first: first, second: second, into: &events)
-            index += dataCount
         }
 
         return events

@@ -1,8 +1,11 @@
+import AppKit
 import SwiftUI
 
-/// Тёплая светлая палитра приложения.
+/// «Белый лист» — спокойная светлая тема Piano Room:
+/// белый холст, чернильная типографика, один акцент (красный фетр).
 enum Theme {
-    /// Интервалы по близости: подпись, группа, содержимое панели, раздел экрана.
+    // MARK: - Интервалы
+
     enum Space {
         static let tight: CGFloat = 4
         static let related: CGFloat = 8
@@ -12,39 +15,101 @@ enum Theme {
         static let spacious: CGFloat = 32
     }
 
+    // MARK: - Раскладка
+
     enum Layout {
-        static let instrumentsWidth: CGFloat = 280
-        static let effectsWidth: CGFloat = 288
-        static let maximumWidth: CGFloat = 1568
+        static let instrumentsWidth: CGFloat = 264
+        static let effectsWidth: CGFloat = 300
+        static let columnGap: CGFloat = 36
+        static let horizontalInset: CGFloat = 26
+        static let headerHeight: CGFloat = 64
+        static let bodyTop: CGFloat = 22
+        static let bodyBottom: CGFloat = 16
+        static let keyboardGap: CGFloat = 22
+        static let keyboardMinHeight: CGFloat = 186
+        static let keyboardMaxHeight: CGFloat = 226
+        static let keyboardRatio: CGFloat = 0.29
     }
 
-    static let backgroundTop = Color(hex: 0xFFFAF2)
-    static let background = Color(hex: 0xF5EFE5)
-    static let backgroundBottom = Color(hex: 0xEDE2D2)
+    // MARK: - Палитра
 
-    static let panel = Color(hex: 0xFFFCF7)
-    static let text = Color(hex: 0x372F27)
-    static let muted = Color(hex: 0x94887B)
-    static let mutedSoft = Color(hex: 0xB3A696)
+    static let background = Color.white
+    static let text = Color(hex: 0x151517)
+    static let textSoft = Color(hex: 0x3B3B41)
+    static let muted = Color(hex: 0x74747E)
+    static let mutedSoft = Color(hex: 0xA2A2AC)
 
-    static let accent = Color(hex: 0xC07C45)
-    static let accentDeep = Color(hex: 0xA4652F)
-    static let accentSoft = Color(hex: 0xF3DDBD)
-    static let accentPale = Color(hex: 0xFBEEDB)
+    static let line = Color(hex: 0xEDEDF1)
+    static let lineSoft = Color(hex: 0xF4F4F7)
+    static let hover = Color(hex: 0xF6F6F8)
 
-    static let line = Color(hex: 0x7A5F40).opacity(0.13)
-    static let lineStrong = Color(hex: 0x7A5F40).opacity(0.22)
-    static let shadow = Color(hex: 0x785837).opacity(0.10)
-    static let shadowSoft = Color(hex: 0x785837).opacity(0.07)
+    /// Красный фетр — единственный цветовой акцент интерфейса.
+    static let accent = Color(hex: 0xE33B25)
+    static let accentDeep = Color(hex: 0xC22C1A)
+    static let accentWash = Color(hex: 0xFEF0EC)
 
-    static let pianoBlack = Color(hex: 0x352C24)
-    static let pianoBlackSoft = Color(hex: 0x4A3F35)
+    static let success = Color(hex: 0x2FA45E)
 
-    static let gradient = LinearGradient(
-        colors: [backgroundTop, background, backgroundBottom],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static let keyBlackTop = Color(hex: 0x26262B)
+    static let keyBlackBottom = Color(hex: 0x111114)
+    static let keyBorder = Color(hex: 0xE6E6EC)
+    static let keyWhiteTop = Color(hex: 0xFFFFFF)
+    static let keyWhiteBottom = Color(hex: 0xF8F8FA)
+    static let keyPressed = Color(hex: 0xFFF0EC)
+
+    // MARK: - Типографика
+
+    enum DisplayWeight {
+        case regular
+        case bold
+    }
+
+    enum UIWeight {
+        case light
+        case regular
+        case medium
+        case semibold
+        case bold
+    }
+
+    /// Gran — дисплейный шрифт: имя инструмента, логотип, крупные цифры.
+    /// Если шрифт не зарегистрирован (превью, тесты), спокойно берём системный.
+    @MainActor
+    static func display(_ size: CGFloat, weight: DisplayWeight = .bold) -> Font {
+        let name = weight == .bold ? "Gran-Bold" : "Gran-Regular"
+        if NSFont(name: name, size: size) != nil {
+            return .custom(name, fixedSize: size)
+        }
+        return .system(size: size, weight: weight == .bold ? .bold : .regular)
+    }
+
+    /// Onest — интерфейсный шрифт: подписи, списки, подсказки, клавиатура.
+    @MainActor
+    static func ui(_ size: CGFloat, weight: UIWeight = .regular) -> Font {
+        let name: String
+        let systemWeight: Font.Weight
+        switch weight {
+        case .light:
+            name = "Onest-Light"
+            systemWeight = .light
+        case .regular:
+            name = "Onest-Regular"
+            systemWeight = .regular
+        case .medium:
+            name = "Onest-Medium"
+            systemWeight = .medium
+        case .semibold:
+            name = "Onest-SemiBold"
+            systemWeight = .semibold
+        case .bold:
+            name = "Onest-Bold"
+            systemWeight = .bold
+        }
+        if NSFont(name: name, size: size) != nil {
+            return .custom(name, fixedSize: size)
+        }
+        return .system(size: size, weight: systemWeight)
+    }
 }
 
 extension Color {

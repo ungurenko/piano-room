@@ -5,8 +5,8 @@ import Foundation
 var failures: [String] = []
 
 let all = InstrumentCatalog.all
-if all.count != 129 {
-    failures.append("Ожидалось 129 инструментов, получено \(all.count)")
+if all.count != 132 {
+    failures.append("Ожидалось 132 инструмента, получено \(all.count)")
 }
 
 let gm = InstrumentCatalog.gm
@@ -25,8 +25,8 @@ if Set(ids).count != ids.count {
 }
 
 let favorites = InstrumentCatalog.favorites
-if favorites.count != 6 {
-    failures.append("Ожидалось 6 избранных, получено \(favorites.count)")
+if favorites.count != 9 {
+    failures.append("Ожидалось 9 избранных, получено \(favorites.count)")
 }
 for favorite in favorites where !all.contains(where: { $0.id == favorite.id }) {
     failures.append("Избранный инструмент отсутствует в каталоге: \(favorite.id)")
@@ -45,7 +45,7 @@ for instrument in gm where instrument.source != .gm {
 }
 
 if failures.isEmpty {
-    print("Каталог в порядке: \(all.count) инструментов, \(gm.count) GM, 6 избранных")
+    print("Каталог в порядке: \(all.count) инструментов, \(gm.count) GM, \(favorites.count) избранных")
     print("Избранные: " + favorites.map(\.name).joined(separator: ", "))
 } else {
     print("ОШИБКИ КАТАЛОГА:")

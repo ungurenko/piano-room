@@ -11,6 +11,14 @@ Resources/SoundBanks/*.sf2
 Tools/*
 !Tools/*.swift
 !Tools/*.sh
+!Tools/*.cpp
+!Tools/*.py
 
 # Системный мусор
 .DS_Store
+
+# Локальные звуковые сравнения
+output/reverb-demo/
+
+# Downloaded instrument recordings (recreated by Tools/download-pianos.sh)
+Resources/Instruments/

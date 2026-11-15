@@ -1,189 +1,159 @@
 import SwiftUI
 
 struct StageView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
-    private let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    private static let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
     var body: some View {
         VStack(spacing: 0) {
             topRow
-                .frame(minHeight: Theme.Space.section)
 
-            Spacer(minLength: Theme.Space.section)
+            Spacer(minLength: 20)
 
-            VStack(spacing: Theme.Space.related) {
-                Text(state.currentInstrument.name)
-                    .font(.system(size: 44, weight: .semibold))
-                    .tracking(-1.1)
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .contentTransition(.opacity)
+            centerContent
 
-                Text(state.currentInstrument.subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.muted)
-                    .multilineTextAlignment(.center)
-                    .contentTransition(.opacity)
+            bottomContent
+                .padding(.top, 20)
 
-                noteChips
-                    .padding(.top, Theme.Space.related)
-            }
-            .animation(.easeInOut(duration: 0.18), value: state.currentInstrument.id)
-
-            Spacer(minLength: Theme.Space.section)
-
-            pianoHint
-                .opacity(!state.pianoConnected && state.runningNotes.isEmpty ? 1 : 0)
-                .allowsHitTesting(!state.pianoConnected && state.runningNotes.isEmpty)
-                .accessibilityHidden(state.pianoConnected || !state.runningNotes.isEmpty)
+            Spacer(minLength: 14)
         }
-        .padding(Theme.Space.group)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(stageBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
-        .shadow(color: Theme.shadowSoft, radius: 16, x: 0, y: 8)
     }
+
+    // MARK: - Верх
 
     private var topRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.group) {
-                stageLabel
-                Spacer(minLength: Theme.Space.group)
-                audioStatus
-            }
-            VStack(alignment: .leading, spacing: Theme.Space.related) {
-                stageLabel
-                audioStatus
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.group) {
+            Text("Сейчас играет")
+                .font(Theme.ui(10.5))
+                .foregroundStyle(Theme.muted)
+                .fixedSize()
+
+            Spacer(minLength: Theme.Space.group)
+
+            Text("\(state.sampleRateLabel) · буфер \(state.bufferFrames) · ≈ \(max(1, Int(state.latencyMilliseconds.rounded()))) мс")
+                .font(Theme.ui(10.5))
+                .foregroundStyle(Theme.muted)
+                .fixedSize()
         }
     }
 
-    private var stageLabel: some View {
-        Text("СЕЙЧАС ИГРАЕТ")
-            .font(.system(size: 10.5, weight: .semibold))
-            .tracking(1.1)
-            .foregroundStyle(Theme.mutedSoft)
-            .fixedSize()
-    }
+    // MARK: - Центр
 
-    private var audioStatus: some View {
-        HStack(spacing: Theme.Space.tight) {
-            Text(state.sampleRateLabel)
-            Text("·")
-            Text("буфер \(state.bufferFrames)")
-            Text("·")
-            Text("≈ \(max(1, Int(state.latencyMilliseconds.rounded()))) мс")
-        }
-        .font(.system(size: 10.5))
-        .foregroundStyle(Theme.muted)
-        .fixedSize()
-        .padding(.horizontal, Theme.Space.related)
-        .padding(.vertical, Theme.Space.tight)
-        .background(Capsule().fill(Color.white.opacity(0.55)))
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-    }
-
-    private var pianoHint: some View {
-        VStack(spacing: Theme.Space.related) {
-            Text("Подключи пианино USB-кабелем — звук пойдёт в его динамики")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.mutedSoft)
+    private var centerContent: some View {
+        VStack(spacing: 0) {
+            Text(displayName)
+                .font(Theme.display(nameSize(for: displayName)))
+                .tracking(-0.03 * nameSize(for: displayName))
+                .foregroundStyle(Theme.text)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+                .contentTransition(.opacity)
 
-            Button {
-                state.noteFromScreen(60, velocity: 100)
-            } label: {
-                HStack(spacing: Theme.Space.tight) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("Проверить звук")
-                        .font(.system(size: 11.5, weight: .medium))
-                }
-                .foregroundStyle(Theme.accentDeep)
-                .padding(.horizontal, 12)
-                .padding(.vertical, Theme.Space.related)
-                .background(
-                    Capsule().fill(Theme.accent.opacity(0.12))
-                )
-                .overlay(
-                    Capsule().strokeBorder(Theme.accent.opacity(0.2), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
+            Text(state.loadingInstrumentName == nil ? state.currentInstrument.subtitle : "")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.top, 10)
+                .contentTransition(.opacity)
+
+            liveArea
+                .padding(.top, 14)
         }
-        .padding(.top, Theme.Space.related)
+        .animation(.easeInOut(duration: 0.18), value: state.currentInstrument.id)
+        .animation(.easeInOut(duration: 0.18), value: state.loadingInstrumentName)
     }
 
-    private var noteChips: some View {
-        HStack(spacing: Theme.Space.tight) {
-            if state.runningNotes.isEmpty {
-                if state.pianoConnected {
-                    Text("Нажми клавишу — звук уже здесь")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.mutedSoft)
-                        .padding(.vertical, 5)
-                }
+    private var liveArea: some View {
+        Group {
+            if state.loadingInstrumentName != nil {
+                ProgressView("Загружаем инструмент…")
+                    .font(Theme.ui(12))
+                    .tint(Theme.accent)
+            } else if state.runningNotes.isEmpty {
+                Text(idleHint)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.muted)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             } else {
-                ForEach(state.runningNotes.sorted().prefix(8), id: \.self) { note in
-                    Text(noteName(note))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.accentDeep)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Theme.accent.opacity(0.14))
-                        )
-                }
-                if state.sustainDown {
-                    Text("Педаль")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.accentDeep)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Theme.accent.opacity(0.14))
-                        )
+                HStack(alignment: .center, spacing: 14) {
+                    ForEach(state.runningNotes.sorted().prefix(8), id: \.self) { note in
+                        Text(noteName(note))
+                            .font(Theme.ui(22, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(Theme.accent)
+                                    .frame(height: 2)
+                                    .offset(y: 4)
+                            }
+                    }
+
+                    if state.sustainDown {
+                        Text("Педаль")
+                            .font(Theme.ui(10.5, weight: .medium))
+                            .foregroundStyle(Theme.muted)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Theme.line, lineWidth: 1)
+                            )
+                    }
                 }
             }
         }
-        .frame(height: Theme.Space.spacious)
+        .frame(height: 58)
         .animation(.easeOut(duration: 0.12), value: state.runningNotes)
     }
 
-    private var stageBackground: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color(hex: 0xFFFDF8), Color(hex: 0xF7EDDD)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            RadialGradient(
-                colors: [Color(hex: 0xFBF0DD), Color.clear],
-                center: .bottom,
-                startRadius: 20,
-                endRadius: 420
-            )
-            Circle()
-                .fill(Color(hex: 0xFDF6EA).opacity(0.9))
-                .frame(width: 460, height: 460)
-                .blur(radius: 60)
-                .offset(x: -260, y: -190)
+    // MARK: - Низ
+
+    private var bottomContent: some View {
+        VStack(spacing: 10) {
+            OutlinePillButton(title: "Проверить звук", systemImage: "play.fill") {
+                state.noteFromScreen(60, velocity: 100)
+            }
+            .disabled(!state.isReady)
+
+            Text("Grace CP-250 · 88 клавиш")
+                .font(Theme.ui(9.5))
+                .foregroundStyle(Theme.mutedSoft)
+        }
+    }
+
+    // MARK: - Тексты
+
+    private var displayName: String {
+        state.loadingInstrumentName ?? state.currentInstrument.name
+    }
+
+    private var idleHint: String {
+        if state.pianoConnected {
+            return "Нажми клавишу — звук уже здесь"
+        }
+        return "Подключи пианино USB-кабелем — звук пойдёт в его динамики"
+    }
+
+    private func nameSize(for name: String) -> CGFloat {
+        switch name.count {
+        case 19...: return 42
+        case 15...18: return 48
+        case 12...14: return 56
+        case 9...11: return 66
+        default: return 82
         }
     }
 
     private func noteName(_ note: UInt8) -> String {
         let index = Int(note) % 12
         let octave = Int(note) / 12 - 1
-        return "\(noteNames[index])\(octave)"
+        return "\(Self.noteNames[index])\(octave)"
     }
 }

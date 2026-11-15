@@ -186,7 +186,7 @@ MIDI-клавиатура ──► CoreMIDI ──► MIDIService ──► Aud
                                                    │
                                     ┌──────────────┴──────────────┐
                                     │ AUSampler (Salamander)      │
-                                    │ AUMIDISynth (128 GM)        │
+                                    │ DLSMusicDevice (128 GM)        │
                                     └──────────────┬──────────────┘
                                                    ▼
                               EQ → Перегруз → Хорус → Дилей → Реверберация
@@ -195,7 +195,7 @@ MIDI-клавиатура ──► CoreMIDI ──► MIDIService ──► Aud
 ```
 
 Два источника нужны потому, что системный сэмплер Apple монотембральный: он не умеет держать
-банк из 128 инструментов. Рояль играет через сэмплер, остальные 128 — через AUMIDISynth.
+банк из 128 инструментов. Рояль играет через сэмплер, остальные 128 — через DLSMusicDevice.
 Переключение мгновенное, без перезагрузки банков.
 
 ---
@@ -245,12 +245,17 @@ swiftc -O Tools/virtualmidi.swift -o Tools/virtualmidi
 
 ### Тесты
 
+`./Tools/run-tests.sh` проверяет разбор MIDI, каталог, хорус и настоящий приём от виртуального MIDI-источника.
+Настройки проверяются через `xcodebuild -project PianoRoom.xcodeproj -scheme PianoRoom test`.
+Тестовый запуск не включает звук и не подключается к пианино.
+
+
 Проверка разбора MIDI-потока (running status, разрезанные сообщения, SysEx):
 
 ```bash
 mkdir -p /tmp/midi_test
 cp Tools/midi_parser_test.swift /tmp/midi_test/main.swift
-swiftc Sources/MIDI/MIDIEvent.swift Sources/MIDI/MIDIParser.swift /tmp/midi_test/main.swift -o /tmp/midi_test/run
+swiftc -swift-version 6 Sources/MIDI/MIDIEvent.swift Sources/MIDI/MIDIParser.swift Sources/MIDI/MIDIService.swift /tmp/midi_test/main.swift -o /tmp/midi_test/run
 /tmp/midi_test/run
 ```
 
@@ -271,3 +276,17 @@ swiftc Sources/Model/Instrument.swift Sources/Model/InstrumentCatalog.swift /tmp
 
 Рояль **Salamander Grand Piano** — Alexander Holm, лицензия CC-BY 3.0.
 Подробности в [CREDITS.md](CREDITS.md).
+
+### Встроенный реверб
+
+Реверберация использует открытый алгоритм Signalsmith и работает самостоятельно. В панели эффектов доступны шесть пространств: Комната, Камерный зал, Концертный зал, Тёплый, Воздушный и Эмбиент. «Настроить» раскрывает длину хвоста, размер, паузу перед отражениями, тембр, ширину и движение хвоста. Выбор пространства сохраняет силу эффекта; настройки запоминаются между запусками.
+
+Проверка звукового модуля: `bash Tools/run-reverb-tests.sh`.
+
+При смене аудиовыхода, буфера или восстановлении звука после изменения конфигурации приложение заново загружает Salamander и восстанавливает выбранный GM-тембр. Проверки сохранения звучания после перезапуска входят в Xcode-тесты и используют банк Salamander.sf2 из ресурсов приложения.
+
+### Дополнительные записанные фортепиано
+
+В избранное добавлены Osiris Piano, Headroom Piano (Yamaha C3) и Fuchs & Möhr Felt Piano. Они используют отдельные библиотеки живых записей. Клавиши 7–9 выбирают новые инструменты; прежние 1–6 сохранены. При первом выборе крупная библиотека загружается несколько секунд, интерфейс показывает её имя и индикатор загрузки.
+
+`bash Tools/download-pianos.sh` скачивает и проверяет три библиотеки перед сборкой. Установочный скрипт выполняет этот шаг автоматически. Требуется около 1,6 ГБ для новых ресурсов; они не хранятся в Git. Источники и лицензии перечислены в [CREDITS.md](CREDITS.md), версии закреплены в скрипте подготовки. Osiris и Headroom играют исходные FLAC через встроенный проигрыватель; Fuchs использует оригинальный SF2 через Apple Sampler. Новые инструменты проходят общую цепочку эффектов.

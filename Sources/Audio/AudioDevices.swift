@@ -2,7 +2,7 @@ import CoreAudio
 import Foundation
 
 /// Аудиовыход Mac, на который можно направить звук приложения.
-struct AudioOutputDevice: Identifiable, Hashable {
+struct AudioOutputDevice: Identifiable, Hashable, Sendable {
     let id: AudioDeviceID
     let name: String
     let uid: String
@@ -142,7 +142,7 @@ enum AudioDevices {
 
     /// Сообщает, когда в системе появилось или исчезло аудиоустройство.
     @discardableResult
-    static func addDeviceChangeListener(_ handler: @escaping () -> Void) -> AudioObjectPropertyListenerBlock? {
+    static func addDeviceChangeListener(_ handler: @escaping @Sendable () -> Void) -> AudioObjectPropertyListenerBlock? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -158,6 +158,16 @@ enum AudioDevices {
             block
         )
         return status == noErr ? block : nil
+    }
+
+    static func removeDeviceChangeListener(_ block: @escaping AudioObjectPropertyListenerBlock) {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                               &address, DispatchQueue.main, block)
     }
 
     // MARK: - Внутреннее

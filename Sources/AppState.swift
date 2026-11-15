@@ -2,6 +2,7 @@ import AVFoundation
 import CoreAudio
 import os
 import SwiftUI
+import Observation
 
 private let appLogger = Logger(subsystem: "com.alexpianoroom.PianoRoom", category: "app")
 
@@ -9,6 +10,7 @@ private let appLogger = Logger(subsystem: "com.alexpianoroom.PianoRoom", categor
 struct EffectUIState {
     var reverb: Double = 0.35
     var reverbOn = true
+    var reverbParameters = ReverbParameters.default
 
     var delay: Double = 0.25
     var delayTime: Double = 0.45
@@ -26,7 +28,7 @@ struct EffectUIState {
 
     var toSettings: EffectSettings {
         EffectSettings(
-            reverb: Float(reverb), reverbEnabled: reverbOn,
+            reverb: Float(reverb), reverbEnabled: reverbOn, reverbParameters: reverbParameters,
             delay: Float(delay), delayTime: Float(delayTime), delayEnabled: delayOn,
             chorus: Float(chorus), chorusEnabled: chorusOn,
             drive: Float(drive), driveEnabled: driveOn,
@@ -38,72 +40,113 @@ struct EffectUIState {
 
 /// Главное состояние приложения: связывает MIDI, звук и интерфейс.
 @MainActor
-final class AppState: ObservableObject {
+@Observable
+final class AppState {
 
     // MARK: - Инструменты и ноты
 
-    @Published var currentInstrument: Instrument = InstrumentCatalog.grandPiano
-    @Published var runningNotes: Set<UInt8> = []
-    @Published var sustainDown = false
-    @Published var showAllInstruments = false
+    var currentInstrument: Instrument = InstrumentCatalog.grandPiano
+    var loadingInstrumentName: String?
+    private var instrumentSelectionGeneration = 0
+    private var diagnosticArgumentsHandled = false
+    var runningNotes: Set<UInt8> = []
+    var sustainDown = false
+    var showAllInstruments = false
 
     // MARK: - MIDI
 
-    @Published var midiSources: [MIDISource] = []
-    @Published var selectedSourceID: Int32?
-    @Published var pianoConnected = false
+    var midiSources: [MIDISource] = []
+    var selectedSourceID: Int32?
+    var pianoConnected = false
 
     // MARK: - Звук
 
-    @Published var audioOutputs: [AudioOutputDevice] = []
-    @Published var selectedOutputID: AudioDeviceID?
-    @Published var outputDeviceName = "Системный вывод"
-    @Published var effects = EffectUIState()
-    @Published var masterVolume: Double = 0.72
-    @Published var localSoundMuted = false
+    var audioOutputs: [AudioOutputDevice] = []
+    var selectedOutputID: AudioDeviceID?
+    var outputDeviceName = "Системный вывод"
+    var effects = EffectUIState()
+    var masterVolume: Double = 0.72
+    var localSoundMuted = false
 
     // MARK: - Запуск
 
-    @Published var isStarting = true
-    @Published var isReady = false
-    @Published var startupError: String?
+    var isStarting = true
+    var isReady = false
+    var startupError: String?
 
     // MARK: - Настройки
 
-    @Published var bufferFrames: UInt32 = 128
+    var bufferFrames: UInt32 = 128
 
     // MARK: - Сервисы
 
-    // Движок и MIDI вызываются и с главного потока, и из потока CoreMIDI,
-    // поэтому намеренно не привязаны к главному актору.
-    nonisolated(unsafe) let engine = AudioEngine()
-    nonisolated(unsafe) let midi = MIDIService()
+    // Движок сериализует команды в собственной очереди; MIDI управляется на MainActor.
+    nonisolated let engine = AudioEngine()
+    let midi = MIDIService()
 
-    private var restoreOnTerminate: (() -> Void)?
     private var didAutoMuteLocalSound = false
     private var deviceListener: AudioObjectPropertyListenerBlock?
     private var outputChosenByUser: Bool
 
     // MARK: - Инициализация
 
-    init() {
-        outputChosenByUser = UserDefaults.standard.bool(forKey: "audioOutputByUser")
-        loadPreferences()
-        setupAudio()
-        setupMIDI()
+    private let preferences: UserDefaults
 
-        // При завершении приложения важно выполнить это синхронно: асинхронная
-        // задача не успеет стартовать до выхода процесса, и пианино останется немым.
-        restoreOnTerminate = { [weak self] in
-            MainActor.assumeIsolated {
-                self?.restorePianoSound()
-            }
-        }
+    init(defaults: UserDefaults = .standard) {
+        preferences = defaults
+        outputChosenByUser = preferences.bool(forKey: "audioOutputByUser")
+        loadPreferences()
+        sanitizePreferences()
     }
 
-    var onTerminate: (() -> Void)? {
-        get { restoreOnTerminate }
-        set { restoreOnTerminate = newValue }
+    private var isShuttingDown = false
+    private var started = false
+    private var screenTasks: [UInt8: Task<Void, Never>] = [:]
+    private var midiTask: Task<Void, Never>?
+    private let midiEpoch = OSAllocatedUnfairLock(initialState: UInt64(0))
+
+    func start() {
+        guard !started else { return }
+        started = true
+        engine.onRuntimeError = { [weak self] message in
+            guard let self, !self.isShuttingDown else { return }
+            self.isReady = false
+            self.startupError = message
+            self.restorePianoSound()
+        }
+        setupAudio()
+    }
+
+    func shutdown() async {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+        isReady = false
+        midi.onEvent = nil
+        midi.onSourcesChanged = nil
+        midiTask?.cancel()
+        midiTask = nil
+        for task in screenTasks.values { task.cancel() }
+        screenTasks.removeAll()
+        restorePianoSound()
+        try? await Task.sleep(for: .milliseconds(120))
+        midi.shutdown()
+        await withCheckedContinuation { continuation in
+            engine.stop { continuation.resume() }
+        }
+        if let deviceListener { AudioDevices.removeDeviceChangeListener(deviceListener) }
+        deviceListener = nil
+    }
+
+    func retryAudio() {
+        guard !isStarting else { return }
+        startEngine()
+    }
+
+    func disconnectMIDISource() {
+        preferences.set(true, forKey: "midiDisabled")
+        midi.disconnect()
+        selectedSourceID = nil
+        panic()
     }
 
     // MARK: - Звук
@@ -123,10 +166,18 @@ final class AppState: ObservableObject {
     func refreshOutputs(preferred: AudioDeviceID?) {
         let outputs = AudioDevices.outputs()
         audioOutputs = outputs
-        guard !outputs.isEmpty else { return }
+        guard !outputs.isEmpty else {
+            selectedOutputID = nil
+            outputDeviceName = "Нет аудиовыхода"
+            isReady = false
+            engine.stop()
+            restorePianoSound()
+            return
+        }
 
-        let saved = UserDefaults.standard.object(forKey: "audioOutputID") as? Int
-        let savedID = saved.map { AudioDeviceID($0) }
+        let saved = preferences.object(forKey: "audioOutputID") as? Int
+        let savedID = saved.flatMap { AudioDeviceID(exactly: $0) }
+        let savedUID = preferences.string(forKey: "audioOutputUID")
 
         let candidate: AudioOutputDevice?
         if !outputChosenByUser, let piano = outputs.first(where: { $0.isPiano }) {
@@ -134,18 +185,19 @@ final class AppState: ObservableObject {
             candidate = piano
         } else {
             candidate =
-                outputs.first { $0.id == savedID } ??
+                outputs.first { $0.uid == savedUID } ??
+                outputs.first { savedUID == nil && $0.id == savedID } ??
                 outputs.first { $0.isPiano } ??
                 outputs.first { $0.id == AudioDevices.defaultOutputID() } ??
                 outputs.first
         }
 
         guard let chosen = candidate else { return }
-        let changed = selectedOutputID != chosen.id
         selectedOutputID = chosen.id
         outputDeviceName = chosen.name
-        if preferred == nil || changed {
-            UserDefaults.standard.set(Int(chosen.id), forKey: "audioOutputID")
+        if !outputChosenByUser || preferences.string(forKey: "audioOutputUID") == nil {
+            preferences.set(chosen.uid, forKey: "audioOutputUID")
+            preferences.set(Int(chosen.id), forKey: "audioOutputID")
         }
     }
 
@@ -154,10 +206,25 @@ final class AppState: ObservableObject {
         refreshOutputs(preferred: previous)
         guard selectedOutputID != previous,
               let device = audioOutputs.first(where: { $0.id == selectedOutputID }) else { return }
-        do {
-            try engine.switchOutput(deviceID: device.id, deviceName: device.name, bufferFrames: bufferFrames)
-        } catch {
-            startupError = error.localizedDescription
+        switchAudio(to: device)
+    }
+
+    private func switchAudio(to device: AudioOutputDevice) {
+        isReady = false
+        engine.switchOutput(deviceID: device.id, deviceName: device.name, bufferFrames: bufferFrames) { [weak self] result in
+            guard let self, !self.isShuttingDown else { return }
+            switch result {
+            case .success:
+                self.isReady = true
+                self.startupError = nil
+                self.bufferFrames = AudioDevices.bufferFrameSize(of: device.id) ?? self.bufferFrames
+                self.preferences.set(Int(self.bufferFrames), forKey: "bufferFrames")
+                self.muteLocalSoundIfNeeded()
+            case .failure(let error):
+                self.isReady = false
+                self.startupError = error.localizedDescription
+                self.restorePianoSound()
+            }
         }
     }
 
@@ -177,16 +244,19 @@ final class AppState: ObservableObject {
             outputDeviceName: name,
             bufferFrames: bufferFrames
         ) { [weak self] result in
-            guard let self else { return }
+            guard let self, !self.isShuttingDown else { return }
             switch result {
             case .success:
-                self.isReady = true
-                self.isStarting = false
+                self.startupError = nil
+                if let id = self.selectedOutputID {
+                    self.bufferFrames = AudioDevices.bufferFrameSize(of: id) ?? self.bufferFrames
+                }
                 self.applyEffects()
-                self.engine.setInstrument(self.currentInstrument)
-                self.handleDiagnosticArguments()
+                self.selectInstrument(self.currentInstrument)
             case .failure(let error):
                 self.isStarting = false
+                self.isReady = false
+                self.restorePianoSound()
                 self.startupError = error.localizedDescription
             }
         }
@@ -194,19 +264,17 @@ final class AppState: ObservableObject {
 
     func selectOutput(_ device: AudioOutputDevice) {
         outputChosenByUser = true
-        UserDefaults.standard.set(true, forKey: "audioOutputByUser")
+        preferences.set(true, forKey: "audioOutputByUser")
         selectedOutputID = device.id
         outputDeviceName = device.name
-        UserDefaults.standard.set(Int(device.id), forKey: "audioOutputID")
-        do {
-            try engine.switchOutput(deviceID: device.id, deviceName: device.name, bufferFrames: bufferFrames)
-        } catch {
-            startupError = error.localizedDescription
-        }
+        preferences.set(Int(device.id), forKey: "audioOutputID")
+        preferences.set(device.uid, forKey: "audioOutputUID")
+        switchAudio(to: device)
     }
 
     func refreshAudioDevices() {
-        refreshOutputs(preferred: selectedOutputID)
+        handleAudioDevicesChanged()
+        handleSourcesChanged(midi.sources())
     }
 
     // MARK: - MIDI
@@ -218,37 +286,48 @@ final class AppState: ObservableObject {
             }
         }
 
-        midi.onEvent = { [weak self] event in
-            self?.handleMIDIEvent(event)
+        let (stream, continuation) = AsyncStream<(UInt64, MIDIEvent)>.makeStream()
+        let epoch = midiEpoch
+        midi.onEvent = { event in continuation.yield((epoch.withLock { $0 }, event)) }
+        midiTask = Task { [weak self] in
+            for await (epoch, event) in stream {
+                guard let self, !Task.isCancelled else { return }
+                guard self.isReady, self.selectedSourceID != nil, epoch == self.midiEpoch.withLock({ $0 }) else { continue }
+                self.handleMIDIEvent(event)
+            }
         }
 
-        midi.start()
+        guard midi.start() else {
+            startupError = "Не удалось запустить MIDI. Повтори запуск звука."
+            midiTask?.cancel()
+            midiTask = nil
+            return
+        }
         handleSourcesChanged(midi.sources())
     }
 
     private func handleSourcesChanged(_ sources: [MIDISource]) {
+        guard !isShuttingDown else { return }
+        let oldEndpoint = midiSources.first { $0.id == selectedSourceID }?.endpoint
+        let sources = sources.filter(\.online)
         midiSources = sources
         pianoConnected = sources.contains { isPianoSource($0) }
 
-        let previousSource = selectedSourceID
-
-        if let current = selectedSourceID, sources.contains(where: { $0.id == current }) {
-            // Источник на месте — ничего не меняем.
-        } else if let piano = sources.first(where: isPianoSource) {
-            selectedSourceID = piano.id
-            midi.connect(to: piano)
-        } else if let first = sources.first {
-            selectedSourceID = first.id
-            midi.connect(to: first)
-        } else {
+        if !pianoConnected { didAutoMuteLocalSound = false }
+        guard !preferences.bool(forKey: "midiDisabled") else { return }
+        let savedID = preferences.object(forKey: "midiSourceID") as? Int32
+        let candidate = sources.first { $0.id == selectedSourceID }
+            ?? sources.first { $0.id == savedID }
+            ?? sources.first(where: isPianoSource)
+            ?? sources.first
+        if candidate?.id != selectedSourceID || candidate?.endpoint != oldEndpoint {
+            midi.disconnect()
+            panic()
             selectedSourceID = nil
-        }
-
-        // Источник сменился или исчез: старые ноты могли «залипнуть».
-        if previousSource != selectedSourceID {
-            engine.allNotesOff()
-            runningNotes.removeAll()
-            sustainDown = false
+            if let candidate {
+                if midi.connect(to: candidate) { selectedSourceID = candidate.id }
+                else { startupError = "Не удалось подключить MIDI-вход" }
+            }
         }
 
         if pianoConnected {
@@ -262,57 +341,47 @@ final class AppState: ObservableObject {
     }
 
     func selectMIDISource(_ source: MIDISource) {
+        midi.disconnect()
+        panic()
+        selectedSourceID = nil
+        guard midi.connect(to: source) else {
+            startupError = "Не удалось подключить MIDI-вход"
+            return
+        }
+        preferences.set(false, forKey: "midiDisabled")
+        preferences.set(source.id, forKey: "midiSourceID")
         selectedSourceID = source.id
-        midi.connect(to: source)
-        // При смене входа старые ноты могли остаться зажатыми.
-        engine.allNotesOff()
-        runningNotes.removeAll()
-        sustainDown = false
     }
 
     // MARK: - Обработка MIDI
 
-    nonisolated private func handleMIDIEvent(_ event: MIDIEvent) {
+    private func handleMIDIEvent(_ event: MIDIEvent) {
         switch event {
         case .noteOn(let note, let velocity, _):
             engine.noteOn(note, velocity: velocity)
-            Task { @MainActor [weak self] in
-                self?.runningNotes.insert(note)
-            }
+            runningNotes.insert(note)
         case .noteOff(let note, _):
             engine.noteOff(note)
-            Task { @MainActor [weak self] in
-                self?.runningNotes.remove(note)
-            }
+            runningNotes.remove(note)
         case .controlChange(let controller, let value, _):
             if controller == 64 {
                 engine.controlChange(controller, value: value)
                 let down = value >= 64
-                Task { @MainActor [weak self] in
-                    self?.sustainDown = down
-                }
+                sustainDown = down
             } else if controller == 91 {
                 // Кнопка Reverb на панели пианино.
                 let amount = Double(value) / 127
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.effects.reverbOn = amount > 0.02
-                    self.setReverb(amount)
-                }
+                effects.reverbOn = amount > 0.02
+                self.setReverb(amount)
             } else if controller == 93 {
                 // Кнопка Chorus/Delay на панели пианино.
                 let amount = Double(value) / 127
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.effects.delayOn = amount > 0.02
-                    self.setDelay(amount)
-                }
+                effects.delayOn = amount > 0.02
+                self.setDelay(amount)
             } else if controller == 120 || controller == 123 {
                 engine.controlChange(controller, value: value)
-                Task { @MainActor [weak self] in
-                    self?.runningNotes.removeAll()
-                    self?.sustainDown = false
-                }
+                runningNotes.removeAll()
+                self.sustainDown = false
             } else {
                 engine.controlChange(controller, value: value)
             }
@@ -324,25 +393,28 @@ final class AppState: ObservableObject {
             // Кнопки тембров на панели пианино присылают Program Change:
             // переключаем приложение на соответствующий инструмент General MIDI.
             guard channel != 9 else { break }
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let instrument = InstrumentCatalog.gm.first(where: { $0.gmProgram == Int(program) }) else { return }
-                if self.currentInstrument.source == .gm, self.currentInstrument.gmProgram == Int(program) {
-                    return
-                }
-                self.selectInstrument(instrument)
+            guard
+                  let instrument = InstrumentCatalog.gm.first(where: { $0.gmProgram == Int(program) }) else { return }
+            if self.isReady, self.currentInstrument.source == .gm, self.currentInstrument.gmProgram == Int(program) {
+                return
             }
+            self.selectInstrument(instrument)
         case .polyPressure:
             break
         }
     }
 
-    func noteFromScreen(_ note: UInt8, velocity: UInt8 = 96) {        engine.noteOn(note, velocity: velocity)
+    func noteFromScreen(_ note: UInt8, velocity: UInt8 = 96) {
+        guard isReady else { return }
+        screenTasks[note]?.cancel()
+        engine.noteOn(note, velocity: velocity)
         runningNotes.insert(note)
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 220_000_000)
-            self?.engine.noteOff(note)
-            self?.runningNotes.remove(note)
+        screenTasks[note] = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+            guard let self, !self.isShuttingDown else { return }
+            self.engine.noteOff(note)
+            runningNotes.remove(note)
+            self.screenTasks[note] = nil
         }
     }
 
@@ -381,6 +453,7 @@ final class AppState: ObservableObject {
             runningNotes.insert(note)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            guard !self.isShuttingDown else { return }
             for note in notes {
                 self.engine.noteOff(note)
                 self.runningNotes.remove(note)
@@ -391,13 +464,51 @@ final class AppState: ObservableObject {
     // MARK: - Инструменты
 
     func selectInstrument(_ instrument: Instrument) {
-        currentInstrument = instrument
-        engine.setInstrument(instrument)
-        UserDefaults.standard.set(instrument.id, forKey: "instrumentID")
+        if !started || (isStarting && !engine.isReady && loadingInstrumentName == nil) {
+            currentInstrument = instrument
+            preferences.set(instrument.id, forKey: "instrumentID")
+            return
+        }
+        panic(invalidateInput: false)
+        instrumentSelectionGeneration += 1
+        let generation = instrumentSelectionGeneration
+        let loading = instrument.source == .sampledPiano || currentInstrument.source == .sampledPiano || !isReady
+        if loading {
+            loadingInstrumentName = instrument.name
+            isReady = false
+        }
+        startupError = nil
+        engine.setInstrument(instrument) { [weak self] result in
+            guard let self, !self.isShuttingDown,
+                  generation == self.instrumentSelectionGeneration else { return }
+            self.loadingInstrumentName = nil
+            self.isStarting = false
+            switch result {
+            case .success:
+                self.currentInstrument = instrument
+                self.preferences.set(instrument.id, forKey: "instrumentID")
+                self.isReady = true
+                if self.midiTask == nil { self.setupMIDI() }
+                self.muteLocalSoundIfNeeded()
+                if !self.diagnosticArgumentsHandled {
+                    self.diagnosticArgumentsHandled = true
+                    self.handleDiagnosticArguments()
+                }
+            case .failure(let error):
+                if error is CancellationError { return }
+                self.isReady = false
+                self.startupError = error.localizedDescription
+                self.restorePianoSound()
+            }
+        }
     }
 
     /// Выключить все ноты: помогает, если клавиша «залипла» или пропал MIDI-вход.
-    func panic() {
+    func panic(invalidateInput: Bool = true) {
+        if invalidateInput { midiEpoch.withLock { $0 &+= 1 } }
+        for task in screenTasks.values { task.cancel() }
+        screenTasks.removeAll()
+        engine.controlChange(64, value: 0)
         engine.allNotesOff()
         runningNotes.removeAll()
         sustainDown = false
@@ -408,9 +519,9 @@ final class AppState: ObservableObject {
     /// По умолчанию при первом подключении глушим встроенный звук пианино,
     /// чтобы во время игры не было двойного звучания.
     private func muteLocalSoundIfNeeded() {
-        guard !didAutoMuteLocalSound else { return }
-        didAutoMuteLocalSound = true
+        guard !isShuttingDown, isReady, pianoConnected, !didAutoMuteLocalSound else { return }
         setLocalSoundMuted(true)
+        didAutoMuteLocalSound = localSoundMuted
     }
 
     func toggleLocalSound() {
@@ -420,27 +531,38 @@ final class AppState: ObservableObject {
     private func setLocalSoundMuted(_ muted: Bool) {
         guard let destination = midi.pianoDestination() else {
             appLogger.error("Пианино не найдено: встроенный звук не переключён")
-            localSoundMuted = muted
             return
         }
         let value: UInt8 = muted ? 0 : 127
+        var success = true
         for channel in UInt8(0)..<UInt8(16) {
-            midi.sendController(122, value: value, channel: channel, to: destination)
+            if !midi.sendController(122, value: value, channel: channel, to: destination) { success = false }
+        }
+        guard success else {
+            if muted { localSoundMuted = true; restorePianoSound() }
+            startupError = "Не удалось переключить встроенный звук пианино"
+            return
         }
         localSoundMuted = muted
         appLogger.info("Встроенный звук пианино \(muted ? "выключен" : "включён", privacy: .public)")
     }
 
     func restorePianoSound() {
+        guard localSoundMuted else { return }
         guard let destination = midi.pianoDestination() else {
             appLogger.error("Пианино не найдено: звук не восстановлен")
             return
         }
+        var success = true
         for channel in UInt8(0)..<UInt8(16) {
-            midi.sendController(122, value: 127, channel: channel, to: destination)
+            if !midi.sendController(122, value: 127, channel: channel, to: destination) { success = false }
         }
-        // Даём CoreMIDI время донести пакет до USB-устройства перед завершением.
-        usleep(120_000)
+        guard success else {
+            appLogger.error("Не удалось восстановить встроенный звук пианино")
+            return
+        }
+        localSoundMuted = false
+        didAutoMuteLocalSound = false
         appLogger.info("Встроенный звук пианино восстановлен при выходе")
     }
 
@@ -463,6 +585,23 @@ final class AppState: ObservableObject {
         effects.reverbOn.toggle()
         engine.setReverb(enabled: effects.reverbOn, amount: Float(effects.reverb))
         saveEffects()
+    }
+
+    func selectReverbPreset(_ id: String) {
+        effects.reverbParameters = ReverbParameters.parameters(for: id)
+        engine.setReverbParameters(effects.reverbParameters)
+        saveEffects()
+    }
+
+    func updateReverbParameter(_ keyPath: WritableKeyPath<ReverbParameters, Float>, value: Float) {
+        effects.reverbParameters[keyPath: keyPath] = value
+        effects.reverbParameters = effects.reverbParameters.sanitized()
+        engine.setReverbParameters(effects.reverbParameters)
+        saveEffects()
+    }
+
+    func resetReverbPreset() {
+        selectReverbPreset(effects.reverbParameters.presetID)
     }
 
     func setDelay(_ value: Double) {
@@ -523,27 +662,23 @@ final class AppState: ObservableObject {
     func setMasterVolume(_ value: Double) {
         masterVolume = value
         engine.setMasterVolume(Float(value))
-        UserDefaults.standard.set(value, forKey: "masterVolume")
+        preferences.set(value, forKey: "masterVolume")
     }
 
     // MARK: - Настройки
 
     func setBufferFrames(_ frames: UInt32) {
         bufferFrames = frames
-        UserDefaults.standard.set(Int(frames), forKey: "bufferFrames")
+        preferences.set(Int(frames), forKey: "bufferFrames")
         // Меняем только буфер: вывод не считаем «выбранным вручную», чтобы
         // при подключении пианино приложение по-прежнему переключилось на него.
         guard let device = audioOutputs.first(where: { $0.id == selectedOutputID }) else { return }
-        do {
-            try engine.switchOutput(deviceID: device.id, deviceName: device.name, bufferFrames: frames)
-        } catch {
-            startupError = error.localizedDescription
-        }
+        switchAudio(to: device)
     }
 
     /// Вернуть эффекты, инструмент и настройки к состоянию «как после установки».
     func resetSettings() {
-        let defaults = UserDefaults.standard
+        let defaults = preferences
         let keys = [
             "instrumentID", "masterVolume", "bufferFrames",
             "fx.reverb", "fx.reverbOn", "fx.delay", "fx.delayOn", "fx.delayTime",
@@ -551,10 +686,11 @@ final class AppState: ObservableObject {
             "fx.eqLow", "fx.eqHigh", "fx.eqOn"
         ]
         for key in keys { defaults.removeObject(forKey: key) }
+        for key in Self.reverbPreferenceKeys { defaults.removeObject(forKey: "fx.reverb.\(key)") }
 
         effects = EffectUIState()
         masterVolume = 0.72
-        bufferFrames = 128
+        setBufferFrames(128)
         selectInstrument(InstrumentCatalog.grandPiano)
         applyEffects()
         engine.setMasterVolume(0.72)
@@ -574,7 +710,7 @@ final class AppState: ObservableObject {
     // MARK: - Сохранение
 
     private func loadPreferences() {
-        let defaults = UserDefaults.standard
+        let defaults = preferences
 
         if let id = defaults.string(forKey: "instrumentID"),
            let instrument = InstrumentCatalog.instrument(id: id) {
@@ -583,9 +719,18 @@ final class AppState: ObservableObject {
 
         masterVolume = defaults.object(forKey: "masterVolume") as? Double ?? 0.72
 
-        if let frames = defaults.object(forKey: "bufferFrames") as? Int, frames > 0 {
+        if let frames = defaults.object(forKey: "bufferFrames") as? Int, [64, 128, 256, 512].contains(frames) {
             bufferFrames = UInt32(frames)
         }
+
+        let presetID = defaults.string(forKey: "fx.reverb.presetID") ?? "chamber"
+        var reverb = ReverbParameters.parameters(for: presetID)
+        for (name, keyPath) in Self.reverbParameterKeys {
+            if let number = defaults.object(forKey: "fx.reverb.\(name)") as? NSNumber {
+                reverb[keyPath: keyPath] = number.floatValue
+            }
+        }
+        effects.reverbParameters = reverb.sanitized()
 
         effects.reverb = defaults.object(forKey: "fx.reverb") as? Double ?? effects.reverb
         effects.delay = defaults.object(forKey: "fx.delay") as? Double ?? effects.delay
@@ -602,8 +747,35 @@ final class AppState: ObservableObject {
         effects.eqOn = defaults.object(forKey: "fx.eqOn") as? Bool ?? effects.eqOn
     }
 
+    private func sanitizePreferences() {
+        func bounded(_ value: Double, fallback: Double) -> Double {
+            value.isFinite ? min(1, max(0, value)) : fallback
+        }
+        masterVolume = bounded(masterVolume, fallback: 0.72)
+        effects.reverb = bounded(effects.reverb, fallback: 0.35)
+        effects.reverbParameters = effects.reverbParameters.sanitized()
+        effects.delay = bounded(effects.delay, fallback: 0.25)
+        effects.delayTime = bounded(effects.delayTime, fallback: 0.45)
+        effects.chorus = bounded(effects.chorus, fallback: 0.3)
+        effects.drive = bounded(effects.drive, fallback: 0.15)
+        effects.eqLow = bounded(effects.eqLow, fallback: 0.5)
+        effects.eqHigh = bounded(effects.eqHigh, fallback: 0.56)
+    }
+
+    private static let reverbParameterKeys: [(String, WritableKeyPath<ReverbParameters, Float>)] = [
+        ("decaySeconds", \.decaySeconds), ("size", \.size), ("preDelayMs", \.preDelayMs),
+        ("tone", \.tone), ("width", \.width), ("modulation", \.modulation)
+    ]
+    private static var reverbPreferenceKeys: [String] {
+        ["presetID"] + reverbParameterKeys.map { $0.0 }
+    }
+
     private func saveEffects() {
-        let defaults = UserDefaults.standard
+        let defaults = preferences
+        defaults.set(effects.reverbParameters.presetID, forKey: "fx.reverb.presetID")
+        for (name, keyPath) in Self.reverbParameterKeys {
+            defaults.set(Double(effects.reverbParameters[keyPath: keyPath]), forKey: "fx.reverb.\(name)")
+        }
         defaults.set(effects.reverb, forKey: "fx.reverb")
         defaults.set(effects.delay, forKey: "fx.delay")
         defaults.set(effects.delayTime, forKey: "fx.delayTime")

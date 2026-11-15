@@ -1,164 +1,233 @@
 import SwiftUI
 
-// MARK: - Панель
+// MARK: - Линии
 
-struct PanelStyle: ViewModifier {
-    var padding: CGFloat = Theme.Space.group
-
-    func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Theme.panel.opacity(0.55))
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Theme.line, lineWidth: 1)
-            )
-            .shadow(color: Theme.shadowSoft, radius: 16, x: 0, y: 8)
-    }
-}
-
-extension View {
-    func panelStyle(padding: CGFloat = Theme.Space.group) -> some View {
-        modifier(PanelStyle(padding: padding))
-    }
-}
-
-// MARK: - Заголовок панели
-
-struct PanelHeader: View {
-    let title: String
-    var trailing: String? = nil
+/// Волосяная линия вместо карточки: интерфейс держится на воздухе и тонких границах.
+struct Hairline: View {
+    var color: Color = Theme.line
+    var height: CGFloat = 1
 
     var body: some View {
-        HStack {
-            Text(title.uppercased())
-                .font(.system(size: 10.5, weight: .semibold))
-                .tracking(1.1)
-                .foregroundStyle(Theme.muted)
-            Spacer()
-            if let trailing {
-                Text(trailing)
-                    .font(.system(size: 10.5, weight: .regular))
-                    .foregroundStyle(Theme.mutedSoft)
-            }
-        }
-        .frame(height: Theme.Space.section)
+        Rectangle()
+            .fill(color)
+            .frame(height: height)
     }
 }
 
-// MARK: - Тумблер
+// MARK: - Словесный знак
 
-struct ToggleSwitch: View {
-    @Binding var isOn: Bool
-    var tint: Color = Theme.accent
+struct Wordmark: View {
+    var size: CGFloat = 16
 
     var body: some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.16)) {
-                isOn.toggle()
-            }
-        } label: {
-            Capsule()
-                .fill(isOn ? tint : Theme.line.opacity(0.85))
-                .frame(width: 34, height: 20)
-                .overlay(alignment: isOn ? .trailing : .leading) {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 16, height: 16)
-                        .padding(2)
-                        .shadow(color: .black.opacity(0.16), radius: 1.5, x: 0, y: 1)
-                }
+        HStack(alignment: .center, spacing: 6) {
+            Text("Piano Room")
+                .font(Theme.display(size))
+                .tracking(-0.01 * size)
+                .foregroundStyle(Theme.text)
+                .fixedSize()
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Theme.accent)
+                .frame(width: max(5, size * 0.34), height: max(5, size * 0.34))
+                .offset(y: 1)
         }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.16), value: isOn)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Piano Room")
     }
 }
 
 // MARK: - Ползунок
 
-struct Fader: View {
+/// Тонкий ползунок в духе «Белого листа»: линия 2 pt и светлая ручка.
+struct MinimalFader: View {
     @Binding var value: Double
     var range: ClosedRange<Double> = 0...1
-    var tint: Color = Theme.accent
+    var title: String
+    var isEnabled = true
+    var step: Double = 0.02
 
     var body: some View {
-        Slider(value: $value, in: range)
-            .controlSize(.small)
-            .tint(tint)
+        GeometryReader { geometry in
+            let width = max(1, geometry.size.width)
+            let progress = Self.progress(value: value, in: range)
+            let thumbSize: CGFloat = 11
+            let thumbX = min(max(0, width * progress - thumbSize / 2), width - thumbSize)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.line)
+                    .frame(height: 2)
+
+                Capsule()
+                    .fill(isEnabled ? Theme.text : Theme.mutedSoft.opacity(0.45))
+                    .frame(width: max(0, width * progress), height: 2)
+
+                Circle()
+                    .fill(Color.white)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                isEnabled ? Theme.text : Theme.mutedSoft.opacity(0.7),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .frame(width: thumbSize, height: thumbSize)
+                    .shadow(color: .black.opacity(0.08), radius: 1, x: 0, y: 1)
+                    .offset(x: thumbX)
+            }
+            .frame(height: 16)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        guard isEnabled else { return }
+                        let ratio = min(max(0, gesture.location.x / width), 1)
+                        value = range.lowerBound + Double(ratio) * (range.upperBound - range.lowerBound)
+                    }
+            )
+        }
+        .frame(height: 16)
+        .opacity(isEnabled ? 1 : 0.5)
+        .allowsHitTesting(isEnabled)
+        .accessibilityRepresentation {
+            Slider(value: $value, in: range) {
+                Text(title)
+            }
+            .labelsHidden()
+            .accessibilityLabel(title)
+        }
+    }
+
+    private static func progress(value: Double, in range: ClosedRange<Double>) -> CGFloat {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0 else { return 0 }
+        return CGFloat((value - range.lowerBound) / span)
     }
 }
 
-// MARK: - Иконка приложения
+// MARK: - Точечный переключатель эффекта
 
-struct AppLogo: View {
-    var size: CGFloat = 34
+/// Кружок 16 pt: контур — эффект выключен, красная точка — включён.
+struct EffectDotToggle: View {
+    let isOn: Bool
+    let title: String
+    let action: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color(hex: 0xD99A63), Color(hex: 0xB06F3C)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-            HStack(spacing: size * 0.14) {
-                ForEach(0..<3, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: size * 0.05, style: .continuous)
-                        .fill(Color(hex: 0xFFF6E9))
-                        .frame(width: size * 0.13, height: size * 0.53)
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(isHovering ? Theme.hover : Color.clear)
+                    .frame(width: 22, height: 22)
+
+                Circle()
+                    .strokeBorder(isOn ? Theme.accent : Color(hex: 0xC9C9D2), lineWidth: 1.5)
+                    .frame(width: 14, height: 14)
+
+                if isOn {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 7, height: 7)
                 }
             }
-            .offset(y: size * 0.03)
+            .frame(width: 22, height: 22)
+            .contentShape(Circle())
         }
-        .frame(width: size, height: size)
-        .shadow(color: Color(hex: 0xA0693A).opacity(0.24), radius: 6, x: 0, y: 3)
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(isOn ? "Выключить эффект" : "Включить эффект")
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn ? "Включено" : "Выключено")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
-// MARK: - Кнопка в шапке
+// MARK: - Тумблер в шапке
 
-struct ToolbarPill: View {
-    var icon: String? = nil
-    let title: String
-    var trailingChevron = false
+struct PillSwitch: View {
+    let isOn: Bool
 
     var body: some View {
-        HStack(spacing: Theme.Space.related) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.muted)
+        Capsule()
+            .fill(isOn ? Theme.text : Color(hex: 0xE4E4EA))
+            .frame(width: 27, height: 16)
+            .overlay(alignment: isOn ? .trailing : .leading) {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 12, height: 12)
+                    .padding(2)
+                    .shadow(color: .black.opacity(0.14), radius: 1, x: 0, y: 1)
             }
-            Text(title)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 192, alignment: .leading)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(Theme.text)
-            if trailingChevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.mutedSoft)
-            }
+            .animation(.easeOut(duration: 0.16), value: isOn)
+    }
+}
+
+// MARK: - Кнопка-иконка
+
+struct IconButton: View {
+    let systemName: String
+    let title: String
+    var action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(isHovering ? Theme.text : Theme.muted)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isHovering ? Theme.hover : Color.clear)
+                )
         }
-        .padding(.horizontal, Theme.Space.control)
-        .padding(.vertical, Theme.Space.related)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(title)
+        .accessibilityLabel(title)
+    }
+}
+
+// MARK: - Кнопка-пилюля
+
+/// Контурная кнопка действия: на наведении заливается чернилами.
+struct OutlinePillButton: View {
+    let title: String
+    var systemImage: String? = nil
+    var isEnabled = true
+    var action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 9, weight: .bold))
+                }
+                Text(title)
+                    .font(Theme.ui(11.5, weight: .medium))
+            }
+            .foregroundStyle(isHovering ? Color.white : Theme.text)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .background(
+                Capsule()
+                    .fill(isHovering ? Theme.text : Color.clear)
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(Theme.text.opacity(isHovering ? 1 : 0.85), lineWidth: 1)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
     }
 }

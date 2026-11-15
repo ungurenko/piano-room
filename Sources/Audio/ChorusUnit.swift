@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Synchronization
 
 /// Собственный эффект хоруса.
 ///
@@ -33,14 +34,26 @@ final class ChorusUnit: AUAudioUnit {
 
     // MARK: - Параметры (меняются из интерфейса)
 
-    /// Частота колебаний, Гц.
-    var rateHz: Float = 0.5
-    /// Глубина колебаний задержки, мс.
-    var depthMilliseconds: Float = 3.0
-    /// Баланс сухого и обработанного сигнала, 0…1.
-    var mix: Float = 0.5
-    /// Включён ли эффект.
-    var isEnabled: Bool = true
+    private let rate = Atomic<Float>(0.5)
+    private let depth = Atomic<Float>(3)
+    private let wetMix = Atomic<Float>(0.5)
+    private let enabled = Atomic<Bool>(true)
+    var rateHz: Float {
+        get { rate.load(ordering: .relaxed) }
+        set { rate.store(newValue.isFinite ? max(0, min(20, newValue)) : 0.5, ordering: .relaxed) }
+    }
+    var depthMilliseconds: Float {
+        get { depth.load(ordering: .relaxed) }
+        set { depth.store(newValue.isFinite ? max(0, min(40, newValue)) : 3, ordering: .relaxed) }
+    }
+    var mix: Float {
+        get { wetMix.load(ordering: .relaxed) }
+        set { wetMix.store(newValue.isFinite ? max(0, min(1, newValue)) : 0, ordering: .relaxed) }
+    }
+    var isEnabled: Bool {
+        get { enabled.load(ordering: .relaxed) }
+        set { enabled.store(newValue, ordering: .relaxed) }
+    }
 
     // MARK: - Инициализация
 
@@ -69,13 +82,13 @@ final class ChorusUnit: AUAudioUnit {
     override func allocateRenderResources() throws {
         try super.allocateRenderResources()
 
+        releaseBuffers()
         sampleRate = outputBus.format.sampleRate
         channelCount = Int(outputBus.format.channelCount)
 
         let maximumDelaySamples = Int(maxDelayMilliseconds / 1000 * Float(sampleRate))
         ringLength = maximumDelaySamples + Int(maximumFramesToRender) + 8
 
-        releaseBuffers()
         for _ in 0..<max(channelCount, 1) {
             guard let pointer = UnsafeMutablePointer<Float>.allocate(capacity: ringLength > 0 ? ringLength : 1) as UnsafeMutablePointer<Float>? else {
                 continue
@@ -110,28 +123,30 @@ final class ChorusUnit: AUAudioUnit {
             var pullFlags = AudioUnitRenderActionFlags()
             let status = pullInputBlock(&pullFlags, timestamp, frameCount, 0, outputData)
             guard status == noErr else { return status }
-            guard self.isEnabled, self.mix > 0.001, !self.ringBuffers.isEmpty else { return noErr }
+            guard !self.ringBuffers.isEmpty else { return noErr }
 
             let frames = Int(frameCount)
             guard frames > 0, self.ringLength > 0 else { return noErr }
 
             let rate = Float(self.sampleRate)
             let increment = self.rateHz / max(rate, 1)
-            let wet = max(0, min(1, self.mix))
+            let wet = self.isEnabled ? self.mix : 0
             let dry = 1 - wet
             let baseSamples = self.baseDelayMilliseconds / 1000 * rate
             let depthSamples = self.depthMilliseconds / 1000 * rate * 0.5
             let ringLength = self.ringLength
             let ringLengthFloat = Float(ringLength)
 
-            var write = self.writeIndex
-            var phase = self.lfoPhase
+            let initialWrite = self.writeIndex
+            let initialPhase = self.lfoPhase
             let bufferList = UnsafeMutableAudioBufferListPointer(outputData)
 
             for (bufferIndex, buffer) in bufferList.enumerated() {
                 guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
                 guard bufferIndex < self.ringBuffers.count, let ring = self.ringBuffers[bufferIndex] else { continue }
 
+                var write = initialWrite
+                var phase = initialPhase
                 let channelOffset: Float = bufferIndex == 0 ? 0 : 0.25
 
                 for frame in 0..<min(frames, Int(buffer.mDataByteSize) / MemoryLayout<Float>.size) {
@@ -160,8 +175,9 @@ final class ChorusUnit: AUAudioUnit {
                 }
             }
 
-            self.writeIndex = write
-            self.lfoPhase = phase
+            self.writeIndex = (initialWrite + frames) % ringLength
+            let finalPhase = initialPhase + Float(frames) * increment
+            self.lfoPhase = finalPhase - floorf(finalPhase)
             return noErr
         }
     }

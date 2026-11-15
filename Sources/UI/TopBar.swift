@@ -1,60 +1,25 @@
 import SwiftUI
 
 struct TopBar: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.section) {
-                brand
-                Spacer(minLength: Theme.Space.group)
-                connectionStatus
+        ZStack {
+            HStack(spacing: Theme.Space.group) {
+                Wordmark(size: 16)
                 Spacer(minLength: Theme.Space.group)
                 controls
             }
-            HStack(spacing: Theme.Space.section) {
-                VStack(alignment: .leading, spacing: Theme.Space.related) {
-                    brand
-                    connectionStatus
-                }
-                Spacer(minLength: Theme.Space.group)
-                controls
-            }
-        }
-        .padding(Theme.Space.group)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Theme.panel.opacity(0.55))
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
-        .shadow(color: Theme.shadowSoft, radius: 14, x: 0, y: 7)
-    }
 
-    // MARK: - Бренд
-
-    private var brand: some View {
-        HStack(spacing: Theme.Space.control) {
-            AppLogo(size: 34)
-            VStack(alignment: .leading, spacing: Theme.Space.tight) {
-                Text("Piano Room")
-                    .font(.system(size: 15, weight: .semibold))
-                    .tracking(-0.2)
-                    .foregroundStyle(Theme.text)
-                Text("Твоё пианино, твои звуки")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.muted)
-            }
+            connectionStatus
         }
-        .fixedSize()
-        .layoutPriority(1)
+        .padding(.horizontal, Theme.Layout.horizontalInset)
+        .frame(height: Theme.Layout.headerHeight)
+        .background(Theme.background)
+        .overlay(alignment: .bottom) {
+            Hairline()
+        }
     }
 
     // MARK: - Статус
@@ -62,63 +27,51 @@ struct TopBar: View {
     private var connectionStatus: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(state.pianoConnected ? Color(hex: 0x6FAE72) : Theme.mutedSoft)
+                .fill(state.pianoConnected ? Theme.success : Theme.mutedSoft)
                 .frame(width: 7, height: 7)
-                .overlay(
-                    Circle()
-                        .stroke(state.pianoConnected ? Color(hex: 0x6FAE72).opacity(0.18) : .clear, lineWidth: 4)
-                )
+                .overlay {
+                    if state.pianoConnected {
+                        Circle()
+                            .strokeBorder(Theme.success.opacity(0.18), lineWidth: 4)
+                    }
+                }
 
             if state.pianoConnected {
-                HStack(spacing: 4) {
-                    Text("Grace CP-250")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                    Text("подключено")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.muted)
-                }
+                Text("Grace CP-250")
+                    .font(Theme.ui(12.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text("подключено")
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.muted)
             } else {
                 Text("Пианино не подключено")
-                    .font(.system(size: 12))
+                    .font(Theme.ui(11.5))
                     .foregroundStyle(Theme.muted)
             }
         }
         .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Управление
 
     private var controls: some View {
-        HStack(spacing: Theme.Space.related) {
+        HStack(spacing: 2) {
             outputMenu
             localSoundControl
-            panicButton
-            settingsButton
+            Rectangle()
+                .fill(Theme.line)
+                .frame(width: 1, height: 18)
+                .padding(.horizontal, 6)
+            IconButton(systemName: "stop.circle", title: "Выключить все ноты") {
+                state.panic()
+            }
+            IconButton(systemName: "gearshape", title: "Настройки") {
+                openSettings()
+            }
         }
         .fixedSize()
-        .layoutPriority(1)
-    }
-
-    private var panicButton: some View {
-        Button {
-            state.panic()
-        } label: {
-            Image(systemName: "stop.circle")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.muted)
-                .frame(width: 36, height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.55))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Theme.line, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .help("Выключить все ноты")
     }
 
     private var outputMenu: some View {
@@ -139,65 +92,97 @@ struct TopBar: View {
                 state.refreshAudioDevices()
             }
         } label: {
-            ToolbarPill(
-                icon: "speaker.wave.2",
-                title: state.outputDeviceName,
-                trailingChevron: true
-            )
+            DeviceMenuLabel(name: state.outputDeviceName)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help("Аудиовыход")
     }
 
     private var localSoundControl: some View {
-        HStack(spacing: Theme.Space.related) {
-            Image(systemName: "pianokeys")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.muted)
-            Text("Встроенный звук")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.muted)
-                .lineLimit(1)
-            ToggleSwitch(
-                isOn: Binding(
-                    get: { !state.localSoundMuted },
-                    set: { _ in state.toggleLocalSound() }
-                )
-            )
-            .disabled(!state.pianoConnected)
+        LocalSoundToggle(
+            isOn: !state.localSoundMuted,
+            isEnabled: state.pianoConnected
+        ) {
+            state.toggleLocalSound()
         }
-        .padding(.horizontal, Theme.Space.control)
-        .padding(.vertical, Theme.Space.related)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.line, lineWidth: 1)
-        )
-        .opacity(state.pianoConnected ? 1 : 0.55)
     }
+}
 
-    private var settingsButton: some View {
-        Button {
-            openSettings()
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 13, weight: .medium))
+// MARK: - Подпись аудиовыхода
+
+private struct DeviceMenuLabel: View {
+    let name: String
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "speaker.wave.2")
+                .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(Theme.muted)
-                .frame(width: 36, height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.55))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Theme.line, lineWidth: 1)
-                )
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Выход")
+                    .font(Theme.ui(8.5, weight: .medium))
+                    .tracking(0.4)
+                    .foregroundStyle(Theme.mutedSoft)
+                Text(name)
+                    .font(Theme.ui(10.5, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 138, alignment: .leading)
+            }
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Theme.mutedSoft)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 34)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovering ? Theme.hover : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Встроенный звук
+
+private struct LocalSoundToggle: View {
+    let isOn: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text("Встроенный звук")
+                    .font(Theme.ui(10.5))
+                    .foregroundStyle(Theme.textSoft)
+                    .lineLimit(1)
+                PillSwitch(isOn: isOn)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHovering ? Theme.hover : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Настройки")
+        .onHover { isHovering = $0 }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
+        .help("Встроенный звук пианино")
+        .accessibilityLabel("Встроенный звук пианино")
+        .accessibilityValue(isOn ? "Включено" : "Выключено")
     }
 }
