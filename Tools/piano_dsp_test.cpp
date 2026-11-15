@@ -184,6 +184,21 @@ int main(int argc, char **argv) {
     pr_piano_midi(p, 0x90, 60, 127);
     check(std::abs(render(p, 64) - 1.0 / 8388608) < 1e-12, "FLAC retains all 24 bits");
     pr_piano_destroy(p);
+    // Signed full-range WAV values must retain historical normalization exactly.
+    for (int value : {-32768, -1, 1, 32767}) {
+        wav(folder / "range.wav", value);
+        write(sfz, "<region> sample=range.wav amp_veltrack=0\n");
+        p = pr_piano_create(44100, 4096);
+        check(pr_piano_load(p, sfz.c_str()), pr_piano_error(p));
+        pr_piano_midi(p, 0x90, 60, 127);
+        float left[64], right[64];
+        realtime = true;
+        pr_piano_render(p, left, right, 64);
+        realtime = false;
+        check(left[32] == float(value) / float(INT16_MAX), "signed WAV16 normalization");
+        check(right[32] == float(value / 2) / float(INT16_MAX), "WAV16 stereo normalization");
+        pr_piano_destroy(p);
+    }
     check(allocations.load() == 0, "render performs no allocation");
     std::cout << "PASS generated WAV/SFZ: 3 sample rates x 4 blocks, velocity/CC/dynamic "
                  "release/stereo/reset/overflow/strict load; render allocations=0\n";
@@ -224,6 +239,7 @@ int main(int argc, char **argv) {
         check(peak > 0, "real produces sound");
         check(allocations.load() == 0, "real render allocation free");
         std::sort(timings.begin(), timings.end());
+        check(timings[1980] < 256.0 / 48000 * 1e6, "p99 render meets the 256-frame deadline");
         std::cout << "REAL " << argv[a]
                   << " load=" << std::chrono::duration<double>(loaded - begin).count()
                   << "s worst256=" << worst << "us p99=" << timings[1980] << "us peak=" << peak

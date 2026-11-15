@@ -72,6 +72,7 @@ final class AudioEngine: @unchecked Sendable {
         Task { @MainActor in handler?(message) }
     }
     func prepare(outputDeviceID: AudioDeviceID?, outputDeviceName: String, bufferFrames: UInt32,
+                 initialInstrument: Instrument = InstrumentCatalog.grandPiano,
                  completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void) {
         let ticket = lifecycle.withLock { $0 += 1; return $0 }
         ready.store(false, ordering: .releasing)
@@ -94,7 +95,8 @@ final class AudioEngine: @unchecked Sendable {
                     self.core.installChorus(transfer.unit)
                     self.core.installReverb(reverbTransfer.unit)
                     self.core.prepare(outputDeviceID: outputDeviceID, outputDeviceName: outputDeviceName,
-                                      bufferFrames: bufferFrames) { result in
+                                      bufferFrames: bufferFrames, initialInstrument: initialInstrument) { result in
+                        self.sampledInstrumentActive.store(initialInstrument.source == .sampledPiano, ordering: .releasing)
                         self.ready.store((try? result.get()) != nil, ordering: .releasing)
                         Task { @MainActor in completion(result) }
                     }
@@ -127,6 +129,7 @@ final class AudioEngine: @unchecked Sendable {
         ready.store(false, ordering: .releasing)
         queue.async {
             self.core.stop()
+            self.ready.store(false, ordering: .releasing)
             Task { @MainActor in completion?() }
         }
     }
@@ -166,6 +169,28 @@ final class AudioEngine: @unchecked Sendable {
             }
         }
     }
+    /// Runs every incoming event on the same queue as instrument and device changes.
+    func receiveMIDI(_ event: MIDIEvent, isCurrent: @escaping @Sendable () -> Bool,
+                     completion: @escaping @Sendable (Result<MIDIEvent, Error>) -> Void) {
+        let lifetime = lifecycle.withLock { $0 }
+        let selection = instrumentSelection.withLock { $0 }
+        queue.async {
+            guard isCurrent(), self.isReady,
+                  lifetime == self.lifecycle.withLock({ $0 }),
+                  selection == self.instrumentSelection.withLock({ $0 }) else { return }
+            do {
+                try self.core.receiveMIDI(event)
+                guard isCurrent(), lifetime == self.lifecycle.withLock({ $0 }),
+                      selection == self.instrumentSelection.withLock({ $0 }) else { return }
+                self.sampledInstrumentActive.store(self.core.currentInstrument.source == .sampledPiano, ordering: .releasing)
+                self.ready.store(self.core.isReady, ordering: .releasing)
+                completion(.success(event))
+            } catch {
+                self.ready.store(false, ordering: .releasing)
+                completion(.failure(error))
+            }
+        }
+    }
     func noteOn(_ note: UInt8, velocity: UInt8) {
         guard isReady, note < 128, velocity < 128 else { return }
         queue.async { self.core.noteOn(note, velocity: velocity) }
@@ -187,20 +212,22 @@ final class AudioEngine: @unchecked Sendable {
     // Stopping AVAudioEngine resets both instruments to their factory sounds.
     // Restore their patches after preparing resources, before accepting new notes.
     static func startEngine(_ engine: AVAudioEngine, grandSampler: AVAudioUnitSampler,
-                            bankURL: URL, gmSynth: AVAudioUnitMIDIInstrument,
+                            bankURL: URL?, gmSynth: AVAudioUnitMIDIInstrument,
                             gmProgram: UInt8) throws {
         if engine.isRunning { engine.stop() }
         engine.prepare()
-        logger.info("Загружаем рояль: \(bankURL.lastPathComponent, privacy: .public)")
-        do {
-            try grandSampler.loadSoundBankInstrument(at: bankURL, program: 0,
-                bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
-                bankLSB: UInt8(kAUSampler_DefaultBankLSB))
-        } catch {
+        if let bankURL {
+            logger.info("Загружаем рояль: \(bankURL.lastPathComponent, privacy: .public)")
             do {
-                try grandSampler.loadSoundBankInstrument(at: bankURL, program: 0, bankMSB: 0, bankLSB: 0)
+                try grandSampler.loadSoundBankInstrument(at: bankURL, program: 0,
+                    bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
+                    bankLSB: UInt8(kAUSampler_DefaultBankLSB))
             } catch {
-                throw EngineError.soundBankLoadFailed(error.localizedDescription)
+                do {
+                    try grandSampler.loadSoundBankInstrument(at: bankURL, program: 0, bankMSB: 0, bankLSB: 0)
+                } catch {
+                    throw EngineError.soundBankLoadFailed(error.localizedDescription)
+                }
             }
         }
         gmSynth.sendProgramChange(gmProgram, bankMSB: 0, bankLSB: 0, onChannel: 0)
@@ -245,7 +272,8 @@ fileprivate final class AudioEngineCore {
         guard isReady, isRunning, !engine.isRunning else { return }
         try startEngineNow()
     }
-    private let grandSampler = AVAudioUnitSampler()
+    private var grandSampler = AVAudioUnitSampler()
+    private var loadedGrandBank: URL?
     private let gmSynth: AVAudioUnitMIDIInstrument
     private let grandMixer = AVAudioMixerNode()
     private let gmMixer = AVAudioMixerNode()
@@ -261,6 +289,7 @@ fileprivate final class AudioEngineCore {
     private var reverbParameters = ReverbParameters.default
     private var reverbAmount: Float = 0.35
     private var reverbEnabled = true
+    private var delayTime: Float = 0.45
     private var chorusUnit: AVAudioUnit?
     private var chorus: ChorusUnit?
 
@@ -284,13 +313,25 @@ fileprivate final class AudioEngineCore {
         outputDeviceID: AudioDeviceID?,
         outputDeviceName: String,
         bufferFrames: UInt32,
+        initialInstrument: Instrument,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         do {
+            if engine.isRunning {
+                allNotesOff()
+                engine.stop()
+                isRunning = false
+            }
             self.outputDeviceName = outputDeviceName
             self.bufferFrameSize = bufferFrames
             try configureOutputDevice(deviceID: outputDeviceID, bufferFrames: bufferFrames)
             try buildGraphIfNeeded()
+            currentInstrument = initialInstrument
+            if usesSFZ {
+                try sampledPiano.load(at: pianoAssetURL(for: initialInstrument), name: initialInstrument.name)
+            } else {
+                sampledPiano.unload()
+            }
             try startEngineNow()
             isReady = true
             applyAllEffectSettings(.default)
@@ -411,8 +452,18 @@ fileprivate final class AudioEngineCore {
     private func startEngineNow() throws {
         if engine.isRunning { engine.stop() }
         sampledPiano.reset()
-        try AudioEngine.startEngine(engine, grandSampler: grandSampler, bankURL: grandPianoBankURL(),
+        let bankURL = currentInstrument.source == .gm || usesSFZ ? nil : try grandPianoBankURL()
+        if loadedGrandBank != nil, loadedGrandBank != bankURL {
+            engine.disconnectNodeOutput(grandSampler)
+            engine.detach(grandSampler)
+            grandSampler = AVAudioUnitSampler()
+            engine.attach(grandSampler)
+            engine.connect(grandSampler, to: grandMixer, format: format)
+            loadedGrandBank = nil
+        }
+        try AudioEngine.startEngine(engine, grandSampler: grandSampler, bankURL: bankURL,
                                     gmSynth: gmSynth, gmProgram: UInt8(max(0, min(127, currentInstrument.gmProgram ?? 0))))
+        loadedGrandBank = bankURL
         isRunning = true
         updateMixLevels()
 
@@ -472,7 +523,9 @@ fileprivate final class AudioEngineCore {
         guard instrument.id != currentInstrument.id || !engine.isRunning else { return }
         allNotesOff()
         let previous = currentInstrument
-        if instrument.source == .sampledPiano || previous.source == .sampledPiano || !engine.isRunning {
+        if instrument.source == .sampledPiano || previous.source == .sampledPiano
+            || (instrument.source == .gm && loadedGrandBank != nil)
+            || (instrument.source == .grandPiano && loadedGrandBank == nil) || !engine.isRunning {
             if engine.isRunning { engine.stop() }
             isRunning = false
             do {
@@ -506,6 +559,27 @@ fileprivate final class AudioEngineCore {
 
     // MARK: - Ноты и контроллеры
 
+    func receiveMIDI(_ event: MIDIEvent) throws {
+        switch event {
+        case .noteOn(let note, let velocity, _): noteOn(note, velocity: velocity)
+        case .noteOff(let note, _): noteOff(note)
+        case .controlChange(let controller, let value, _):
+            if controller == 91 {
+                let amount = Float(value) / 127
+                setReverb(enabled: amount > 0.02, amount: amount)
+            } else if controller == 93 {
+                let amount = Float(value) / 127
+                setDelay(enabled: amount > 0.02, amount: amount, time: delayTime)
+            } else { controlChange(controller, value: value) }
+        case .programChange(let program, let channel):
+            if channel != 9, let instrument = InstrumentCatalog.gm.first(where: { $0.gmProgram == Int(program) }) {
+                try setInstrument(instrument)
+            }
+        case .pitchBend(let value, _): pitchBend(value)
+        case .channelPressure(let value, _): channelPressure(value)
+        case .polyPressure: break
+        }
+    }
     func noteOn(_ note: UInt8, velocity: UInt8) {
         switch currentInstrument.source {
         case .grandPiano:
@@ -631,6 +705,7 @@ fileprivate final class AudioEngineCore {
     }
 
     func setDelay(enabled: Bool, amount: Float, time: Float) {
+        delayTime = time
         delay.wetDryMix = enabled ? max(0, min(1, amount)) * 100 : 0
         delay.delayTime = 0.08 + Double(max(0, min(1, time))) * 0.72
     }

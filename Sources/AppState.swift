@@ -102,8 +102,7 @@ final class AppState {
     private var isShuttingDown = false
     private var started = false
     private var screenTasks: [UInt8: Task<Void, Never>] = [:]
-    private var midiTask: Task<Void, Never>?
-    private let midiEpoch = OSAllocatedUnfairLock(initialState: UInt64(0))
+    private var midiRouter: MIDIRouter?
 
     func start() {
         guard !started else { return }
@@ -123,8 +122,8 @@ final class AppState {
         isReady = false
         midi.onEvent = nil
         midi.onSourcesChanged = nil
-        midiTask?.cancel()
-        midiTask = nil
+        midiRouter?.invalidate(stop: true)
+        midiRouter = nil
         for task in screenTasks.values { task.cancel() }
         screenTasks.removeAll()
         restorePianoSound()
@@ -239,10 +238,13 @@ final class AppState {
             ? (audioOutputs.first { $0.id == AudioDevices.defaultOutputID() }?.name ?? "Системный вывод")
             : (audioOutputs.first { $0.id == deviceID }?.name ?? outputDeviceName)
 
+        let selectionAtStart = instrumentSelectionGeneration
+        loadingInstrumentName = currentInstrument.source == .sampledPiano ? currentInstrument.name : nil
         engine.prepare(
             outputDeviceID: deviceID,
             outputDeviceName: name,
-            bufferFrames: bufferFrames
+            bufferFrames: bufferFrames,
+            initialInstrument: currentInstrument
         ) { [weak self] result in
             guard let self, !self.isShuttingDown else { return }
             switch result {
@@ -252,10 +254,13 @@ final class AppState {
                     self.bufferFrames = AudioDevices.bufferFrameSize(of: id) ?? self.bufferFrames
                 }
                 self.applyEffects()
-                self.selectInstrument(self.currentInstrument)
+                if self.instrumentSelectionGeneration == selectionAtStart {
+                    self.selectInstrument(self.currentInstrument)
+                }
             case .failure(let error):
                 self.isStarting = false
                 self.isReady = false
+                self.loadingInstrumentName = nil
                 self.restorePianoSound()
                 self.startupError = error.localizedDescription
             }
@@ -286,21 +291,27 @@ final class AppState {
             }
         }
 
-        let (stream, continuation) = AsyncStream<(UInt64, MIDIEvent)>.makeStream()
-        let epoch = midiEpoch
-        midi.onEvent = { event in continuation.yield((epoch.withLock { $0 }, event)) }
-        midiTask = Task { [weak self] in
-            for await (epoch, event) in stream {
-                guard let self, !Task.isCancelled else { return }
-                guard self.isReady, self.selectedSourceID != nil, epoch == self.midiEpoch.withLock({ $0 }) else { continue }
-                self.handleMIDIEvent(event)
+        let router = MIDIRouter(submit: { [engine] event, isCurrent, completion in
+            engine.receiveMIDI(event, isCurrent: isCurrent, completion: completion)
+        }, observe: { [weak self] batch in
+            guard let self, !self.isShuttingDown else { return }
+            for result in batch {
+                switch result {
+                case .success(let event): self.handleMIDIEvent(event)
+                case .failure(let error):
+                    self.isReady = false
+                    self.startupError = error.localizedDescription
+                    self.restorePianoSound()
+                }
             }
-        }
+        })
+        midiRouter = router
+        midi.onEvent = { [router] event in router.receive(event) }
 
         guard midi.start() else {
             startupError = "Не удалось запустить MIDI. Повтори запуск звука."
-            midiTask?.cancel()
-            midiTask = nil
+            midiRouter?.invalidate(stop: true)
+            midiRouter = nil
             return
         }
         handleSourcesChanged(midi.sources())
@@ -355,51 +366,40 @@ final class AppState {
 
     // MARK: - Обработка MIDI
 
+    /// Reflect commands already applied on the audio queue; never send them twice.
     private func handleMIDIEvent(_ event: MIDIEvent) {
         switch event {
-        case .noteOn(let note, let velocity, _):
-            engine.noteOn(note, velocity: velocity)
+        case .noteOn(let note, _, _):
             runningNotes.insert(note)
         case .noteOff(let note, _):
-            engine.noteOff(note)
             runningNotes.remove(note)
         case .controlChange(let controller, let value, _):
             if controller == 64 {
-                engine.controlChange(controller, value: value)
-                let down = value >= 64
-                sustainDown = down
+                sustainDown = value >= 64
             } else if controller == 91 {
-                // Кнопка Reverb на панели пианино.
-                let amount = Double(value) / 127
-                effects.reverbOn = amount > 0.02
-                self.setReverb(amount)
+                effects.reverb = Double(value) / 127
+                effects.reverbOn = effects.reverb > 0.02
+                saveEffects()
             } else if controller == 93 {
-                // Кнопка Chorus/Delay на панели пианино.
-                let amount = Double(value) / 127
-                effects.delayOn = amount > 0.02
-                self.setDelay(amount)
+                effects.delay = Double(value) / 127
+                effects.delayOn = effects.delay > 0.02
+                saveEffects()
             } else if controller == 120 || controller == 123 {
-                engine.controlChange(controller, value: value)
                 runningNotes.removeAll()
-                self.sustainDown = false
-            } else {
-                engine.controlChange(controller, value: value)
+                sustainDown = false
             }
-        case .pitchBend(let value, _):
-            engine.pitchBend(value)
-        case .channelPressure(let value, _):
-            engine.channelPressure(value)
         case .programChange(let program, let channel):
-            // Кнопки тембров на панели пианино присылают Program Change:
-            // переключаем приложение на соответствующий инструмент General MIDI.
-            guard channel != 9 else { break }
-            guard
+            guard channel != 9,
                   let instrument = InstrumentCatalog.gm.first(where: { $0.gmProgram == Int(program) }) else { return }
-            if self.isReady, self.currentInstrument.source == .gm, self.currentInstrument.gmProgram == Int(program) {
-                return
+            if currentInstrument.id != instrument.id {
+                for task in screenTasks.values { task.cancel() }
+                screenTasks.removeAll()
+                runningNotes.removeAll()
+                sustainDown = false
+                currentInstrument = instrument
+                preferences.set(instrument.id, forKey: "instrumentID")
             }
-            self.selectInstrument(instrument)
-        case .polyPressure:
+        case .pitchBend, .channelPressure, .polyPressure:
             break
         }
     }
@@ -464,12 +464,14 @@ final class AppState {
     // MARK: - Инструменты
 
     func selectInstrument(_ instrument: Instrument) {
-        if !started || (isStarting && !engine.isReady && loadingInstrumentName == nil) {
+        if isReady, engine.isReady, currentInstrument.id == instrument.id { return }
+        if !started || (isStarting && !engine.isReady) {
             currentInstrument = instrument
+            if started { loadingInstrumentName = instrument.name }
             preferences.set(instrument.id, forKey: "instrumentID")
             return
         }
-        panic(invalidateInput: false)
+        panic()
         instrumentSelectionGeneration += 1
         let generation = instrumentSelectionGeneration
         let loading = instrument.source == .sampledPiano || currentInstrument.source == .sampledPiano || !isReady
@@ -488,7 +490,7 @@ final class AppState {
                 self.currentInstrument = instrument
                 self.preferences.set(instrument.id, forKey: "instrumentID")
                 self.isReady = true
-                if self.midiTask == nil { self.setupMIDI() }
+                if self.midiRouter == nil { self.setupMIDI() }
                 self.muteLocalSoundIfNeeded()
                 if !self.diagnosticArgumentsHandled {
                     self.diagnosticArgumentsHandled = true
@@ -505,7 +507,7 @@ final class AppState {
 
     /// Выключить все ноты: помогает, если клавиша «залипла» или пропал MIDI-вход.
     func panic(invalidateInput: Bool = true) {
-        if invalidateInput { midiEpoch.withLock { $0 &+= 1 } }
+        if invalidateInput { midiRouter?.invalidate() }
         for task in screenTasks.values { task.cancel() }
         screenTasks.removeAll()
         engine.controlChange(64, value: 0)
@@ -569,6 +571,8 @@ final class AppState {
     // MARK: - Эффекты
 
     func applyEffects() {
+        midiRouter?.invalidateFeedback(controller: 91)
+        midiRouter?.invalidateFeedback(controller: 93)
         var settings = effects.toSettings
         settings.masterVolume = Float(masterVolume)
         engine.applyAllEffectSettings(settings)
@@ -576,12 +580,14 @@ final class AppState {
     }
 
     func setReverb(_ value: Double) {
+        midiRouter?.invalidateFeedback(controller: 91)
         effects.reverb = value
         engine.setReverb(enabled: effects.reverbOn, amount: Float(value))
         saveEffects()
     }
 
     func toggleReverb() {
+        midiRouter?.invalidateFeedback(controller: 91)
         effects.reverbOn.toggle()
         engine.setReverb(enabled: effects.reverbOn, amount: Float(effects.reverb))
         saveEffects()
@@ -605,18 +611,21 @@ final class AppState {
     }
 
     func setDelay(_ value: Double) {
+        midiRouter?.invalidateFeedback(controller: 93)
         effects.delay = value
         engine.setDelay(enabled: effects.delayOn, amount: Float(value), time: Float(effects.delayTime))
         saveEffects()
     }
 
     func setDelayTime(_ value: Double) {
+        midiRouter?.invalidateFeedback(controller: 93)
         effects.delayTime = value
         engine.setDelay(enabled: effects.delayOn, amount: Float(effects.delay), time: Float(value))
         saveEffects()
     }
 
     func toggleDelay() {
+        midiRouter?.invalidateFeedback(controller: 93)
         effects.delayOn.toggle()
         engine.setDelay(enabled: effects.delayOn, amount: Float(effects.delay), time: Float(effects.delayTime))
         saveEffects()

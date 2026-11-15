@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <regex>
@@ -22,6 +23,8 @@ static_assert(std::atomic<unsigned>::is_always_lock_free && std::atomic<bool>::i
               "Audio queue requires lock-free atomics");
 struct Sample {
     std::vector<float> pcm;
+    std::vector<int16_t> pcm16;
+    float scale = 1;
     unsigned channels = 0;
     double rate = 0;
     size_t frames = 0;
@@ -201,37 +204,63 @@ struct PRPianoDSP {
         }
     }
 };
-static Sample loadSample(const std::filesystem::path &path) {
+using Decoder = std::unique_ptr<drflac, void (*)(drflac *)>;
+static Decoder openDecoder(const std::filesystem::path &path) {
+    return Decoder(path.extension() == ".flac" || path.extension() == ".FLAC"
+        ? drflac_open_file(path.c_str(), nullptr) : nullptr, drflac_close);
+}
+static Sample loadSample(const std::filesystem::path &path, Decoder f) {
     Sample s;
     if (path.extension() == ".flac" || path.extension() == ".FLAC") {
-        std::unique_ptr<drflac, void (*)(drflac *)> f(drflac_open_file(path.c_str(), nullptr),
-                                                      [](drflac *p) { drflac_close(p); });
         if (!f || f->channels < 1 || f->channels > 2 || !f->totalPCMFrameCount ||
             f->totalPCMFrameCount > 100000000)
             throw std::runtime_error("Invalid FLAC: " + path.string());
         s.channels = f->channels;
         s.rate = f->sampleRate;
         s.frames = f->totalPCMFrameCount;
-        s.pcm.resize((s.frames + 4) * s.channels);
-        // Decode directly to float; IEEE float preserves every 24-bit PCM value.
-        if (drflac_read_pcm_frames_f32(f.get(), s.frames, s.pcm.data()) != s.frames)
-            throw std::runtime_error("Truncated FLAC: " + path.string());
+        if (f->bitsPerSample == 16) {
+            s.pcm16.resize((s.frames + 4) * s.channels);
+            s.scale = 1.f / 32768;
+        } else {
+            s.pcm.resize((s.frames + 4) * s.channels);
+        }
+        for (size_t offset = 0; offset < s.frames;) {
+            auto count = std::min<size_t>(16384, s.frames - offset);
+            auto read = s.pcm16.empty()
+                ? drflac_read_pcm_frames_f32(f.get(), count, s.pcm.data() + offset * s.channels)
+                : drflac_read_pcm_frames_s16(f.get(), count, s.pcm16.data() + offset * s.channels);
+            if (read != count) throw std::runtime_error("Truncated FLAC: " + path.string());
+            offset += count;
+        }
     } else {
         WAVReader reader(path.string());
         if (!reader.valid() || reader.num_channels < 1 || reader.num_channels > 2 ||
             reader.num_samples <= 0 || reader.num_samples > 100000000)
             throw std::runtime_error("Invalid WAV: " + path.string());
-        SampleBuffer b(reader.num_channels, reader.num_samples, reader.bits_per_sample,
-                       SampleBuffer::Little, SampleBuffer::Interleaved);
-        if (!reader.read_samples_into(0, reader.num_samples, &b))
-            throw std::runtime_error("Truncated WAV: " + path.string());
         s.channels = reader.num_channels;
         s.rate = reader.sample_rate;
         s.frames = reader.num_samples;
-        s.pcm.resize((s.frames + 4) * s.channels);
-        for (size_t i = 0; i < s.frames; ++i)
-            for (unsigned c = 0; c < s.channels; ++c)
-                s.pcm[i * s.channels + c] = b.read_sample(b.channel_start(c) + i * b.stride);
+        if (reader.bits_per_sample == 16) {
+            s.pcm16.resize((s.frames + 4) * s.channels);
+        } else {
+            s.pcm.resize((s.frames + 4) * s.channels);
+        }
+        // WAV uses the historical INT16_MAX normalization, unlike FLAC.
+        SampleBuffer chunk(reader.num_channels, 16384, reader.bits_per_sample,
+                           SampleBuffer::Little, SampleBuffer::Interleaved);
+        for (size_t offset = 0; offset < s.frames; offset += 16384) {
+            size_t count = std::min<size_t>(16384, s.frames - offset);
+            if (!reader.read_samples_into(offset, count, &chunk))
+                throw std::runtime_error("Truncated WAV: " + path.string());
+            for (size_t i = 0; i < count; ++i)
+                for (unsigned c = 0; c < s.channels; ++c) {
+                    auto bytes = chunk.channel_start(c) + i * chunk.stride;
+                    size_t index = (offset + i) * s.channels + c;
+                    if (s.pcm16.empty()) s.pcm[index] = chunk.read_sample(bytes);
+                    else s.pcm16[index] = int16_t(uint16_t(bytes[0]) | uint16_t(bytes[1]) << 8);
+                }
+        }
+        s.scale = 0; // Preserve WAV division rounding in the sample accessor.
     }
     if (s.rate < 8000 || s.rate > 384000)
         throw std::runtime_error("Invalid sample rate");
@@ -287,6 +316,7 @@ extern "C" int pr_piano_load(PRPianoDSP *p, const char *path) {
         int curveIndex = -1;
         std::map<int, float> points;
         std::map<std::string, unsigned> loaded;
+        std::vector<std::filesystem::path> paths;
         auto flushCurve = [&] {
             if (curveIndex < 0) {
                 if (!points.empty())
@@ -364,7 +394,8 @@ extern "C" int pr_piano_load(PRPianoDSP *p, const char *path) {
                 auto found = loaded.find(name);
                 if (found == loaded.end()) {
                     region.sample = unsigned(p->samples.size());
-                    p->samples.push_back(loadSample(full));
+                    p->samples.emplace_back();
+                    paths.push_back(full);
                     loaded[name] = region.sample;
                 } else
                     region.sample = found->second;
@@ -442,6 +473,24 @@ extern "C" int pr_piano_load(PRPianoDSP *p, const char *path) {
             if (r.releaseCurve >= 0 && !p->hasCurve[r.releaseCurve] && r.releaseCurve != 4)
                 throw std::runtime_error("Undefined release curve");
         }
+        // Open headers serially: dr_flac initializes shared CPU capability flags on open.
+        // Decode at most two files concurrently, with no opens racing decoder reads.
+        for (size_t i = 0; i < paths.size(); i += 2) {
+            auto first = openDecoder(paths[i]);
+            if (i + 1 == paths.size()) {
+                p->samples[i] = loadSample(paths[i], std::move(first));
+                break;
+            }
+            auto second = openDecoder(paths[i + 1]);
+            auto work = std::async(std::launch::async, [&, i, decoder = std::move(first)]() mutable {
+                return loadSample(paths[i], std::move(decoder));
+            });
+            std::exception_ptr error;
+            try { p->samples[i + 1] = loadSample(paths[i + 1], std::move(second)); }
+            catch (...) { error = std::current_exception(); }
+            p->samples[i] = work.get();
+            if (error) std::rethrow_exception(error);
+        }
         p->cc = p->defaults;
         return 1;
     } catch (const std::exception &e) {
@@ -487,45 +536,54 @@ extern "C" void pr_piano_render(PRPianoDSP *p, float *l, float *r, unsigned fram
         if (v.r) {
             const auto &reg = *v.r;
             const auto &s = p->samples[reg.sample];
-            for (unsigned f = 0; f < frames; ++f) {
-                size_t index = size_t(v.pos);
-                if (index >= s.frames) {
-                    v.r = nullptr;
-                    break;
-                }
-                if (v.releasing) {
-                    v.elapsed += 1 / p->rate;
-                    double t = v.elapsed / v.releaseDuration;
-                    if (t >= 1) {
+            const float shapeExp = std::exp(reg.shape);
+            const float shapeDenominator = 1 - shapeExp;
+            auto renderVoice = [&](auto sampleAt) {
+                for (unsigned f = 0; f < frames; ++f) {
+                    size_t index = size_t(v.pos);
+                    if (index >= s.frames) {
                         v.r = nullptr;
                         break;
                     }
-                    float k = reg.shape;
-                    v.env = v.releaseStart *
-                            (std::abs(k) < .0001
-                                 ? float(1 - t)
-                                 : float((std::exp(k * t) - std::exp(k)) / (1 - std::exp(k))));
-                } else if (v.env < 1) {
-                    v.env = std::min(1.f, v.env + float(1 / (reg.attack * p->rate)));
-                }
-                float frac = float(v.pos - index);
-                auto interpolate = [&](unsigned channel) {
-                    auto at = [&](int64_t frame) {
-                        return s
-                            .pcm[size_t(std::clamp<int64_t>(frame, 0, s.frames - 1)) * s.channels +
-                                 channel];
+                    if (v.releasing) {
+                        v.elapsed += 1 / p->rate;
+                        double t = v.elapsed / v.releaseDuration;
+                        if (t >= 1) {
+                            v.r = nullptr;
+                            break;
+                        }
+                        float k = reg.shape;
+                        v.env = v.releaseStart *
+                                (std::abs(k) < .0001
+                                     ? float(1 - t)
+                                     : float((std::exp(k * t) - shapeExp) / shapeDenominator));
+                    } else if (v.env < 1) {
+                        v.env = std::min(1.f, v.env + float(1 / (reg.attack * p->rate)));
+                    }
+                    float frac = float(v.pos - index);
+                    auto interpolate = [&](unsigned channel) {
+                        auto at = [&](int64_t frame) {
+                            return sampleAt(size_t(std::clamp<int64_t>(frame, 0, s.frames - 1)) * s.channels + channel);
+                        };
+                        const float a = at(int64_t(index) - 1), b = at(index), c = at(index + 1),
+                                    d = at(index + 2);
+                        return b +
+                               .5f * frac *
+                                   (c - a +
+                                    frac * (2 * a - 5 * b + 4 * c - d + frac * (3 * (b - c) + d - a)));
                     };
-                    const float a = at(int64_t(index) - 1), b = at(index), c = at(index + 1),
-                                d = at(index + 2);
-                    return b +
-                           .5f * frac *
-                               (c - a +
-                                frac * (2 * a - 5 * b + 4 * c - d + frac * (3 * (b - c) + d - a)));
-                };
-                float left = interpolate(0), right = s.channels == 2 ? interpolate(1) : left;
-                l[f] += left * v.env * v.gainL;
-                r[f] += right * v.env * v.gainR;
-                v.pos += v.step;
+                    float left = interpolate(0), right = s.channels == 2 ? interpolate(1) : left;
+                    l[f] += left * v.env * v.gainL;
+                    r[f] += right * v.env * v.gainR;
+                    v.pos += v.step;
+                }
+            };
+            if (s.pcm16.empty()) {
+                renderVoice([&](size_t index) { return s.pcm[index]; });
+            } else if (s.scale == 0) {
+                renderVoice([&](size_t index) { return float(s.pcm16[index]) / float(INT16_MAX); });
+            } else {
+                renderVoice([&](size_t index) { return float(s.pcm16[index]) * s.scale; });
             }
         }
 }
