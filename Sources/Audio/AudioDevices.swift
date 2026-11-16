@@ -9,7 +9,9 @@ struct AudioOutputDevice: Identifiable, Hashable, Sendable {
     let channels: Int
     let sampleRate: Double
 
-    var isPiano: Bool {
+    var isPiano: Bool { Self.looksLikePiano(name) }
+
+    static func looksLikePiano(_ name: String) -> Bool {
         let lowered = name.lowercased()
         return lowered.contains("5704") || lowered.contains("piano") || lowered.contains("pia")
     }

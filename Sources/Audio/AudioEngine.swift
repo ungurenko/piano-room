@@ -292,6 +292,15 @@ fileprivate final class AudioEngineCore {
     private var delayTime: Float = 0.45
     private var chorusUnit: AVAudioUnit?
     private var chorus: ChorusUnit?
+    // The piano's USB input has no volume control on the Mac and sits far below its
+    // internal sound, so the piano output gets make-up gain; the limiter keeps forte unclipped.
+    private let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+        componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
+        componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
+    private static let pianoOutputBoostDB: AudioUnitParameterValue = 12
+    // The limiter delays audio by its attack time, so attack stays at 1 ms for live playing.
+    private static let limiterAttackSeconds: AudioUnitParameterValue = 0.001
+    private static let limiterReleaseSeconds: AudioUnitParameterValue = 0.04
 
     private let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
     private var graphBuilt = false
@@ -369,6 +378,7 @@ fileprivate final class AudioEngineCore {
         engine.attach(equalizer)
         engine.attach(distortion)
         engine.attach(delay)
+        engine.attach(limiter)
         guard let reverbUnit, reverb != nil else { throw EngineError.reverbUnavailable }
         engine.attach(reverbUnit)
 
@@ -399,7 +409,8 @@ fileprivate final class AudioEngineCore {
         engine.connect(reverbUnit, to: masterMixer, format: format)
         // Явно соединяем мастер-микшер с выходом: автоматическое подключение
         // mainMixerNode на этой macOS не срабатывает, и звук не рендерится.
-        engine.connect(masterMixer, to: engine.outputNode, format: format)
+        engine.connect(masterMixer, to: limiter, format: format)
+        engine.connect(limiter, to: engine.outputNode, format: format)
 
         configureEffects()
         graphBuilt = true
@@ -466,6 +477,7 @@ fileprivate final class AudioEngineCore {
         loadedGrandBank = bankURL
         isRunning = true
         updateMixLevels()
+        updateOutputGain()
 
         // Измеритель уровня нужен только для диагностического запуска.
         if ProcessInfo.processInfo.arguments.contains("--test-note") {
@@ -555,6 +567,15 @@ fileprivate final class AudioEngineCore {
         grandMixer.outputVolume = currentInstrument.source != .gm && !usesSFZ ? 1 : 0
         gmMixer.outputVolume = currentInstrument.source == .gm ? 1 : 0
         sampledMixer.outputVolume = usesSFZ ? (currentInstrument.id == "piano-osiris" ? 0.35 : 1) : 0
+    }
+
+    private func updateOutputGain() {
+        let boost = AudioOutputDevice.looksLikePiano(outputDeviceName) ? Self.pianoOutputBoostDB : 0
+        let unit = limiter.audioUnit
+        AudioUnitSetParameter(unit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, Self.limiterAttackSeconds, 0)
+        AudioUnitSetParameter(unit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, Self.limiterReleaseSeconds, 0)
+        AudioUnitSetParameter(unit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, boost, 0)
+        logger.info("Усиление выхода: \(boost) дБ")
     }
 
     // MARK: - Ноты и контроллеры
